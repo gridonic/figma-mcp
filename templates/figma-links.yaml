@@ -1,0 +1,19 @@
+# Figma MCP links
+# Used by figma-mcp rules and scripts (tokens:sync, cache warm, modules:setup)
+#
+# Prefix a URL with @ to mark it as the primary source for that entry.
+# Links without @ are still used by the scripts but are not treated as cache-warm targets.
+# Leave a value empty ("") to skip that module.
+
+styleguide:
+  colors: ""
+  typography: ""
+  grid: ""
+
+modules:
+  # Add your modules here, one per line.
+  # Prefix the Figma URL with @ to enable cache warming for that module.
+  # Example:
+  #   header-text: "@https://www.figma.com/design/<file-key>/...?node-id=XXX-YYY&m=dev"
+  #   content-accordion: "@https://www.figma.com/design/<file-key>/...?node-id=XXX-YYY&m=dev"
+  #   content-faq: ""

@@ -1,0 +1,159 @@
+---
+description: Create multiple Astro modules from Figma designs via MCP cache
+globs:
+alwaysApply: false
+---
+
+# Rule: Create Modules from Figma Cache
+
+Uses rule: @figma-mcp-generic.mdc
+Do not change .scss files. Do not change .gql files. Only change .astro files.
+
+**Do not ask for any confirmation at any point. Do not summarise what you are about to do. Do not ask whether to proceed. Start implementing immediately and only output text when you require user input mid-task or are writing the final summary table.**
+
+## Preparation: Read available modules
+
+Read `.cursor/mcp/figma-links.yaml`.
+Use `.cursor/tmp/figma-mcp-cache/` as the primary source for all Figma resources.
+
+A module has a usable Figma link if its value starts with `@http`. All modules with a valid Figma link are automatically selected. Do not ask which modules to implement — immediately start the processing loop for all available modules.
+
+## Processing loop
+
+For each available module, spawn a dedicated subagent and have that subagent complete all steps for that module.
+
+Subagent requirements:
+
+- Start one subagent per selected module using the Subagent tool (`subagent_type="generalPurpose"`).
+- Launch all module subagents in parallel in one tool call batch when possible.
+- Pass the module name, resolved `.astro` path rules, the module's Figma link, and cache root path to the subagent prompt.
+- Each subagent must complete Step 1 to Step 6 for its assigned module independently.
+- Do not do module implementation work in the parent agent when a subagent can do it.
+- Parent agent waits for all subagents to finish, then compiles their one-line Step 6 results.
+
+---
+
+### Step 1: Resolve component file path
+
+Convert the module name to an `.astro` file path using this pattern:
+
+| Module name (kebab-case) | File path                                               |
+| ------------------------ | ------------------------------------------------------- |
+| `content-accordion`      | `src/components/content-modules/ContentAccordion.astro` |
+| `header-text-media`      | `src/components/header-modules/HeaderTextMedia.astro`   |
+| `teaser-default`         | `src/components/content-modules/TeaserDefault.astro`    |
+
+Rules:
+
+- The first segment (e.g. `content`, `header`, `teaser`) becomes the subfolder name, suffixed with `-modules`
+- The full kebab name converts to PascalCase for the filename
+- `teaser-*` and `cta-*` components live in `content-modules/`
+
+If the file does not exist, skip this module with a one-line note and move to the next.
+
+Subagent note:
+
+- The subagent must perform this resolution itself for its assigned module before any Figma calls.
+
+---
+
+### Step 2: Inspect the Figma design (cache-first)
+
+Get the Figma link for this module from `figma-links.yaml` (strip the leading `@`).
+
+Using cached Figma resources (preferred):
+
+1. Load a cached screenshot of the node for visual reference (`get_screenshot` cache artifact).
+2. Load cached `get_design_context` output for structure, layout and spacing.
+3. Load cached `get_variable_defs` output for typography and color variables.
+
+Cache behavior (cache-required):
+
+- Use cache artifacts as the required source for all artifacts.
+- Do not call Figma MCP tools directly when a cache artifact is missing.
+- If any required cache entry is missing, stop the entire processing loop immediately and warn the user to run `npm run figma:cache:warm` or `npm run figma:cache:refresh`, then rerun this rule.
+- Refresh/update of the persistent cache remains explicit and user-triggered only.
+
+Design-intent extraction (required):
+
+- Define key elements before editing (for example: title, lead, actions, cards, media).
+- For each key element, assign an intended target grid lane from the Figma composition using the lane-resolution rules defined in `@figma-mcp-generic.mdc`, based on screenshot/context and not code heuristics.
+- Store this as an internal "intent map" and treat it as the source of truth for Step 4 and Step 5.
+
+---
+
+### Step 3: Read the current component
+
+Read the existing `.astro` file for this module.
+
+Compare it to the Figma design and identify what needs to change.
+
+---
+
+### Step 4: Implement changes
+
+Apply only the necessary changes to the `.astro` file and follow `@figma-mcp-generic.mdc` as the source of truth for:
+
+- Grid/lane resolution and `ui-grid` usage
+- Typography mapping
+- Color usage
+- Placeholder handling for Figma component instances
+
+Module-specific constraints for this rule:
+
+- If a module currently uses an invalid/unknown grid token, replace it with a valid placement according to `@figma-mcp-generic.mdc`.
+- Keep placement aligned to the Step 2 intent map for each key element.
+
+Do not add, rename or delete any `.scss` files.
+
+---
+
+### Step 5: Validate in browser
+
+Before moving to Step 6, force a filesystem change event for the edited `.astro` file so the dev server picks up the update without manual save. Do this by appending a temporary marker comment (for example `<!-- mcp-refresh -->`) and then immediately removing it in a second write.
+
+Validation must use `chrome-devtools-mcp` in headless mode only. Do not use `cursor-ide-browser` (or any shared interactive browser window) for this step. Each subagent must run its own isolated headless validation flow for its assigned module.
+
+Then double-check that the implemented `.astro` changes are good by opening the module testing route in headless Chrome DevTools MCP. For each component, there should be a testing subpage with the same name, i.e. ContentAccordion should be at `/testing/modules/contentaccordion`. Be sure to use https. If the rendered changes are not visible yet, hard refresh once and re-open the route.
+
+Strict validation gate (required):
+
+- Use `evaluate_script` to collect, at minimum, computed `gridColumn` values and horizontal bounds (`left`, `right`, `width`) for the module's key elements (title, lead, cards, etc.).
+- Compare rendered positions against the Figma screenshot/grid overlay and ensure alignment to the intended `ui-grid` areas.
+- For each key element, explicitly verify "implemented lane == intent map lane". Treat any mismatch as a failure even when the token is technically valid.
+- Validation fails immediately if:
+  - any key element resolves to a forbidden or unknown grid-column token (when not defined in `_ui-grid.scss`), or
+  - key element alignment does not match the intended grid area from Figma, or
+  - a key element uses a valid token but lands in a different lane than the intent map.
+- If validation fails, return to Step 4, fix placement, and re-run Step 5 until all checks pass.
+
+---
+
+### Step 6: Continue
+
+State in one sentence what was changed in this module, then immediately proceed to the next one without asking for confirmation.
+
+Subagent output contract:
+
+- End with exactly one status line in this format:
+  - `module-name | ✓ implemented | <one-sentence change summary>`
+  - `module-name | ✗ skipped | <reason>`
+- Keep this line as the final line of the subagent response so the parent agent can aggregate results reliably.
+- If validation fails and cannot be resolved, use:
+  - `module-name | ✗ skipped | grid validation failed (unknown grid-column token or misalignment)`
+- If any required artifact is missing in cache, do not call Figma MCP directly and stop the entire processing loop immediately.
+- When stopping due to missing cache artifacts, warn the user to run a cache population/update script first (for example `npm run figma:cache:warm` or `npm run figma:cache:refresh`) and then rerun this rule.
+- Use this status line for the module where the cache miss is detected:
+  - `module-name | ✗ skipped | missing required figma artifact(s): <artifact-list>; run npm run figma:cache:warm (or npm run figma:cache:refresh) and rerun`
+- In the one-sentence summary for implemented modules, include one explicit lane decision (example: `title -> grid-width`) to make intent decisions auditable.
+
+---
+
+## After all modules
+
+When all selected module subagents are done, output a short summary table:
+
+| Module            | Status          |
+| ----------------- | --------------- |
+| content-accordion | ✓ implemented   |
+| content-faq       | ✗ no Figma link |

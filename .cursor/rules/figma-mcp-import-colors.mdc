@@ -1,0 +1,14 @@
+---
+description: Import color design tokens from Figma via MCP into _colors.scss
+globs:
+alwaysApply: false
+---
+
+# Rule: Import Colors from Figma via MCP
+
+At no point should you add any new files to the project, except when asked to 'add a new file'.
+
+## Import the Color Design Tokens from Figma via MCP
+
+- Use the `.cursor/mcp/figma-links.yaml` file to get the Figma link of the colors section.
+- Remove the existing theme colors in the file `src/sass/root/_colors.scss` and add the colors from the provided link. Do not touch any of the semantic colors. Add the values as RGBA values.

@@ -1,0 +1,53 @@
+---
+description: Design a single Astro module from a Figma link — static markup then optional interactivity
+globs:
+alwaysApply: false
+---
+
+# Rule: Create Design from Figma
+
+## Step 1: Implement Design (Static Markup & Styles)
+
+Ask the user for the Figma link. Access it via MCP and implement the design using:
+
+- Semantic, accessible HTML — `@accessibility.mdc`
+- RSCSS structure — `@rscss.mdc`
+- Typography — `_font-types.scss`
+- Layout — `_ui-grid.scss`
+- Buttons — `_ui-button.scss`
+- No client-side JS yet
+
+> Ask:
+>
+> "Is the static design implementation accurate and ready to add interactivity?"
+
+Proceed to Step 2 if yes.
+
+---
+
+## Step 2: Implement Interactivity (Client-side JavaScript)
+
+Ask the user:
+
+> "Does this component require interactivity?"
+
+If yes, use this boilerplate:
+
+```
+<script>
+  import { BaseComponent, registerComponent } from '@/client/component.client';
+
+  registerComponent(
+    '[data-component-name]',
+    class ComponentName extends BaseComponent {
+      init() {
+        console.log('component-name');
+      }
+    },
+  );
+</script>
+```
+
+> Replace all `component-name` / `ComponentName` / `data-component-name` with the actual component name.
+
+If no interactivity is needed, end the workflow or guide to next steps (e.g. QA, testing, deployment).

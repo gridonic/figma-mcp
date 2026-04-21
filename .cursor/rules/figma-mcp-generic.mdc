@@ -1,0 +1,23 @@
+---
+description: Generic baseline rules for all figma-mcp rules — grid alignment, typography mapping, color usage
+globs:
+alwaysApply: false
+---
+
+Execute these instructions without explaining each step. Only output text if you need to ask the user for input. If you need to ask the user for input, ask in a single sentence only.
+At no point should you add any new files to the project, except when asked to 'add a new file'.
+Without asking for permission, check if all steps have already been completed. Afterwards, implement each step which still needs to be completed.
+
+Follow the rules defined in the rscss.mdc rule.
+Follow the rules defined in the accessibility.mdc rule.
+If the linked module includes a grid-overlay component or layer, treat that overlay as the primary source of truth for content alignment.
+Align content to the ui-grid named markers defined in the current grid configuration (`_ui-grid.scss`) first; do not assume fixed marker names. Resolve the best matching lane names from the active grid setup for each module. If named alignment still does not match the design intent, use explicit `grid-column` placement (for example `grid-column: 3`).
+When a component contains a nested grid, you MUST set the nested grid container to `display: grid` and `grid-template-columns: subgrid`, and you MUST place nested children using `grid-column` against inherited tracks. You MUST NOT create a custom column structure for nested grids unless subgrid is impossible in that specific case.
+
+When applying a design from Figma, use the following guide:
+1. Look at the Design in terms of Figma components. If there are component instances, use a simple placeholder, like <div class="component-instance placeholder"></div>, instead of custom markup. Surround the placeholder with a comment in the code if there are component instances, which could be replaced with reusable components.
+2. Layout - Pay attention to the grid in the Figma design, including any grid-overlay layer, and match it to `_ui-grid.scss`. Use the grid created by the `ui-grid` class on the top-level element, and apply the lane-resolution and nested-grid requirements defined above.
+3. Colors - Use the color variables defined in the _colors.scss file. Assume that the background-color has been set in the shared/_base.scss file, so you don't have to set it again.
+4. Typography - Before applying text styles, use the Figma MCP get_variable_defs tool on the target node to read its typography variables (e.g. small/text-xl, large/text-md). Map those to the matching font classes in _font-types.scss (e.g. text-xl, text-md) and use those classes on the elements.
+
+Focus on correct layout, using the correct color classes and font classes. It does not matter if the design is not pixel perfect, but should be a good starting point to finish the implementation.

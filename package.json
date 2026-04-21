@@ -1,0 +1,23 @@
+{
+  "name": "figma-mcp",
+  "version": "1.0.0",
+  "description": "Figma MCP → Astro components workflow: cursor rules, cache management, and design token sync",
+  "type": "module",
+  "bin": {
+    "figma-mcp": "scripts/figma-mcp.js"
+  },
+  "files": [
+    ".cursor",
+    "scripts",
+    "templates"
+  ],
+  "scripts": {
+    "release": "node scripts/release.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "tsx": "^4.19.4"
+  }
+}

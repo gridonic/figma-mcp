@@ -1,0 +1,19 @@
+---
+description: Import full styleguide (colors + fonts) from Figma via MCP
+globs:
+alwaysApply: false
+---
+
+# Rule: Import Styleguide from Figma via MCP
+
+Execute these instructions without explaining each step. Only output text if you need to ask the user for input. If you need to ask the user for input, ask in a single sentence only.
+At no point should you add any new files to the project, except when asked to 'add a new file'.
+Without asking for permission, check if all steps have already been completed. Afterwards, implement each step which still needs to be completed.
+
+## Step 1: Import the Color Design Tokens from Figma via MCP
+
+- Import the colors with the @figma-mcp-import-colors.mdc rule.
+
+## Step 2: Import the Fonts from Figma via MCP
+
+- Import the fonts with the @figma-mcp-import-fonts.mdc rule.
