@@ -338,7 +338,7 @@ async function main(): Promise<void> {
         clientFrameworks: 'unknown',
       },
       refresh,
-      allowFetchOnMiss: false,
+      allowFetchOnMiss: true,
     });
     const colorsPayload = colorsResult.data as Record<string, unknown>;
     const colorsToolResult = (colorsPayload.result ?? colorsPayload) as { content?: Array<{ type: string; text?: string }> };
@@ -356,7 +356,7 @@ async function main(): Promise<void> {
         clientFrameworks: 'unknown',
       },
       refresh,
-      allowFetchOnMiss: false,
+      allowFetchOnMiss: true,
     });
     const typographyPayload = typographyResult.data as Record<string, unknown>;
     const typographyToolResult = (typographyPayload.result ?? typographyPayload) as {
