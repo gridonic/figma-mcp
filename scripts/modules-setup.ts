@@ -96,7 +96,7 @@ function loadModulesFromFigmaLinks(path: string): ModuleTarget[] {
 
     if (!inModules) continue;
 
-    const match = line.match(/^\s{2}([a-z0-9-]+):\s*"([^"]*)"/i);
+    const match = line.match(/^\s{2}([a-z0-9-]+):\s*["']([^"']*)["']/i);
     if (!match) continue;
 
     const moduleName = match[1];

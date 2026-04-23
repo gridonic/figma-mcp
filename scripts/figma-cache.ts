@@ -111,7 +111,7 @@ function loadTargetsFromConfig(configPath: string): FigmaTarget[] {
   const lines = content.split('\n');
   const targets: FigmaTarget[] = [];
   for (const line of lines) {
-    const m = line.match(/^\s*([a-z0-9-]+):\s*"(@?https?:\/\/[^"]+)"/i);
+    const m = line.match(/^\s*([a-z0-9-]+):\s*["'](@?https?:\/\/[^"']+)["']/i);
     if (!m) continue;
     const name = m[1];
     const url = m[2];
