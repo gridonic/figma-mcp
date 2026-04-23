@@ -119,8 +119,8 @@ interface FigmaNodeConfig {
 
 function loadFigmaConfig(configPath: string): FigmaNodeConfig {
   const content = readFileSync(configPath, 'utf-8');
-  const colorsUrlMatch = content.match(/colors:\s*"(@?https?:\/\/[^"]+)"/);
-  const typographyUrlMatch = content.match(/typography:\s*"(@?https?:\/\/[^"]+)"/);
+  const colorsUrlMatch = content.match(/colors:\s*["'](@?https?:\/\/[^"']+)["']/);
+  const typographyUrlMatch = content.match(/typography:\s*["'](@?https?:\/\/[^"']+)["']/);
   const colorsMatch = content.match(/colors:.*node-id=(\d+)-(\d+)/);
   const typographyMatch = content.match(/typography:.*node-id=(\d+)-(\d+)/);
 
