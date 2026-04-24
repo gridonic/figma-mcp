@@ -114,7 +114,7 @@ Before moving to Step 6, force a filesystem change event for the edited `.astro`
 
 Validation must use `chrome-devtools-mcp` in headless mode only. Do not use `cursor-ide-browser` (or any shared interactive browser window) for this step. Each subagent must run its own isolated headless validation flow for its assigned module.
 
-Then double-check that the implemented `.astro` changes are good by opening the module testing route in headless Chrome DevTools MCP. For each component, there should be a testing subpage with the same name, i.e. ContentAccordion should be at `/testing/modules/contentaccordion`. Be sure to use https. If the rendered changes are not visible yet, hard refresh once and re-open the route.
+Then double-check that the implemented `.astro` changes are good by opening the module testing route in headless Chrome DevTools MCP. For each component, there should be a testing subpage with the same name, i.e. ContentAccordion should be at `/testing/contentaccordion`. Be sure to use https. If the rendered changes are not visible yet, hard refresh once and re-open the route.
 
 Strict validation gate (required):
 
