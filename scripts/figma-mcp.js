@@ -237,7 +237,7 @@ function cmdHelp() {
   console.log('  cache refresh              Force-refresh cache from Figma MCP');
   console.log('  cache get --url --node     Fetch and cache a single artifact');
   console.log('  tokens:sync                Sync color + typography tokens to SCSS files');
-  console.log('  modules:setup              Run full setup pipeline for all modules');
+  console.log('  modules:setup              Run full setup pipeline (supports --debug-cache, --cache-root)');
   console.log('  info                       Show version and paths');
   console.log('  help                       Show this help');
 }

@@ -1,16 +1,15 @@
 #!/usr/bin/env npx tsx
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { createHash } from 'crypto';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { getCachedOrFetch } from './figma-cache.js';
+import { normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot, validateModuleCache } from './cache-lookup.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
 const ROOT = process.cwd();
 
 const FIGMA_LINKS_PATH = join(ROOT, '.cursor/mcp/figma-links.yaml');
-const CACHE_INDEX_PATH = join(ROOT, '.cursor/tmp/figma-mcp-cache/index.json');
 
 type RequiredTool = 'get_screenshot' | 'get_design_context' | 'get_variable_defs';
 
@@ -28,23 +27,23 @@ interface SetupOptions {
   scaffoldMissing: boolean;
   runCreateModules: boolean;
   createModulesCommand: string | null;
-}
-
-interface CacheIndex {
-  version: number;
-  entries: Record<string, unknown>;
+  debugCache: boolean;
+  cacheRoot: string | null;
 }
 
 const REQUIRED_TOOLS: RequiredTool[] = ['get_screenshot', 'get_design_context', 'get_variable_defs'];
 
 function parseArgs(argv: string[]): SetupOptions {
   const commandArg = readArgValue(argv, '--create-modules-command');
+  const cacheRoot = readArgValue(argv, '--cache-root');
   return {
     runTokenSync: !argv.includes('--skip-tokens-sync'),
     warmCache: !argv.includes('--no-warm-cache'),
     scaffoldMissing: !argv.includes('--no-scaffold'),
     runCreateModules: !argv.includes('--skip-create-modules'),
     createModulesCommand: commandArg,
+    debugCache: argv.includes('--debug-cache'),
+    cacheRoot,
   };
 }
 
@@ -117,20 +116,6 @@ function loadModulesFromFigmaLinks(path: string): ModuleTarget[] {
   return modules;
 }
 
-function loadCacheIndex(path: string): CacheIndex {
-  if (!existsSync(path)) return { version: 1, entries: {} };
-  try {
-    return JSON.parse(readFileSync(path, 'utf-8')) as CacheIndex;
-  } catch {
-    return { version: 1, entries: {} };
-  }
-}
-
-function buildCacheKey(tool: RequiredTool, fileKey: string, nodeId: string): string {
-  const argsHash = createHash('sha1').update(JSON.stringify({})).digest('hex').slice(0, 12);
-  return `${fileKey}__${nodeId.replace(':', '-')}__${tool}__${argsHash}`;
-}
-
 function createModuleSkeleton(moduleName: string): string {
   const componentName = toPascalCase(moduleName);
   return `---
@@ -146,35 +131,61 @@ const { class: className, ...attrs } = Astro.props;
 `;
 }
 
-async function ensureRequiredCache(moduleTarget: ModuleTarget, warmCache: boolean): Promise<string[]> {
-  const missingTools: string[] = [];
-
-  for (const tool of REQUIRED_TOOLS) {
-    if (warmCache) {
-      try {
-        await getCachedOrFetch({
-          toolName: tool,
-          sourceUrl: moduleTarget.figmaUrl,
-          nodeId: moduleTarget.nodeId,
-        });
-        continue;
-      } catch {
-        missingTools.push(tool);
-      }
-    } else {
-      const index = loadCacheIndex(CACHE_INDEX_PATH);
-      const key = buildCacheKey(tool, moduleTarget.fileKey, moduleTarget.nodeId);
-      if (!index.entries[key]) {
-        missingTools.push(tool);
+async function ensureRequiredCache(
+  moduleTarget: ModuleTarget,
+  options: { warmCache: boolean; cacheRoot: string; debugCache: boolean }
+): Promise<string[]> {
+  const topNodeId = normalizeNodeId(moduleTarget.nodeId);
+  if (options.warmCache) {
+    const missing: string[] = [];
+    const { nestedNodeIds } = parseFigmaNodeIds(moduleTarget.figmaUrl);
+    const nodes = [topNodeId, ...nestedNodeIds.map(normalizeNodeId).filter((id) => id !== topNodeId)];
+    if (options.debugCache) {
+      console.log(`[cache-debug] cacheRoot=${options.cacheRoot}`);
+      console.log(`[cache-debug] topLevelNodeId=${topNodeId}`);
+      console.log(`[cache-debug] nestedNodeIds=${nodes.slice(1).join(',') || '(none)'}`);
+    }
+    for (const nodeId of nodes) {
+      for (const tool of REQUIRED_TOOLS) {
+        if (options.debugCache) {
+          console.log(`[cache-debug] warm-fetch ${tool} node=${nodeId}`);
+        }
+        try {
+          await getCachedOrFetch({
+            toolName: tool,
+            sourceUrl: moduleTarget.figmaUrl,
+            nodeId,
+          });
+        } catch {
+          const prefix = nodeId === topNodeId ? '' : '[nested] ';
+          missing.push(`${prefix}missing required artifact: ${tool} for node ${nodeId} (cacheRoot=${options.cacheRoot})`);
+        }
       }
     }
+    return missing;
   }
 
-  return missingTools;
+  const result = validateModuleCache({
+    cacheRoot: options.cacheRoot,
+    figmaUrl: moduleTarget.figmaUrl,
+    fileKey: moduleTarget.fileKey,
+    topLevelNodeId: topNodeId,
+    requiredTools: REQUIRED_TOOLS,
+    debug: options.debugCache,
+  });
+  if (options.debugCache) {
+    for (const line of result.debug) {
+      console.log(`[cache-debug] ${line}`);
+    }
+  }
+  return result.failures.map((failure) =>
+    failure.scope === 'nested' ? `[nested] ${failure.message}` : failure.message
+  );
 }
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  const cacheRoot = resolveCacheRoot({ cacheRoot: options.cacheRoot ?? undefined, cwd: ROOT });
   const modules = loadModulesFromFigmaLinks(FIGMA_LINKS_PATH);
 
   if (options.runTokenSync) {
@@ -192,8 +203,21 @@ async function main(): Promise<void> {
   const rows: Array<{ moduleName: string; file: string; cache: string; scaffold: string }> = [];
 
   for (const moduleTarget of modules) {
-    const missingCache = await ensureRequiredCache(moduleTarget, options.warmCache);
-    const cacheStatus = missingCache.length === 0 ? 'ok' : `missing: ${missingCache.join(',')}`;
+    const missingCache = await ensureRequiredCache(moduleTarget, {
+      warmCache: options.warmCache,
+      cacheRoot,
+      debugCache: options.debugCache,
+    });
+    const topLevelMissing = missingCache.filter((m) => !m.startsWith('[nested]'));
+    const nestedMissing = missingCache.filter((m) => m.startsWith('[nested]'));
+    let cacheStatus = 'ok';
+    if (topLevelMissing.length > 0 && nestedMissing.length > 0) {
+      cacheStatus = `missing top-level + nested: ${[...topLevelMissing, ...nestedMissing].join(' | ')}`;
+    } else if (topLevelMissing.length > 0) {
+      cacheStatus = `missing top-level: ${topLevelMissing.join(' | ')}`;
+    } else if (nestedMissing.length > 0) {
+      cacheStatus = `missing nested only: ${nestedMissing.join(' | ')}`;
+    }
 
     let scaffoldStatus = 'exists';
     if (!existsSync(moduleTarget.astroPath)) {

@@ -1,17 +1,17 @@
 #!/usr/bin/env npx tsx
 
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { createHash } from 'crypto';
 import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { buildCacheKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot } from './cache-lookup.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
 const ROOT = process.cwd();
 
 const MCP_URL = 'http://127.0.0.1:3845/mcp';
 const DEFAULT_CONFIG_PATH = join(ROOT, '.cursor/mcp/figma-links.yaml');
-const CACHE_ROOT = join(ROOT, '.cursor/tmp/figma-mcp-cache');
+const CACHE_ROOT = resolveCacheRoot({ cwd: ROOT });
 const INDEX_PATH = join(CACHE_ROOT, 'index.json');
 const ARTIFACTS_DIR = join(CACHE_ROOT, 'artifacts');
 
@@ -90,19 +90,19 @@ function saveIndex(index: CacheIndex): void {
 }
 
 function toCanonicalNodeId(nodeId: string): string {
-  return nodeId.replace('-', ':');
+  return normalizeNodeId(nodeId);
 }
 
 function parseFigmaUrl(url: string): { fileKey: string; nodeId: string } {
   const clean = url.replace(/^@/, '');
   const fileKeyMatch = clean.match(/\/design\/([^/]+)/);
-  const nodeMatch = clean.match(/[?&]node-id=(\d+)-(\d+)/);
-  if (!fileKeyMatch || !nodeMatch) {
+  if (!fileKeyMatch) {
     throw new Error(`Could not parse fileKey/nodeId from URL: ${url}`);
   }
+  const { topLevelNodeId } = parseFigmaNodeIds(clean);
   return {
     fileKey: fileKeyMatch[1],
-    nodeId: `${nodeMatch[1]}:${nodeMatch[2]}`,
+    nodeId: topLevelNodeId,
   };
 }
 
@@ -120,11 +120,6 @@ function loadTargetsFromConfig(configPath: string): FigmaTarget[] {
     targets.push({ name, url: url.replace(/^@/, ''), fileKey: parsed.fileKey, nodeId: parsed.nodeId });
   }
   return targets;
-}
-
-function buildCacheKey(toolName: ToolName, fileKey: string, nodeId: string, extraArgs: Record<string, unknown>): string {
-  const argsHash = createHash('sha1').update(JSON.stringify(extraArgs)).digest('hex').slice(0, 12);
-  return `${fileKey}__${nodeId.replace(':', '-')}__${toolName}__${argsHash}`;
 }
 
 function readArtifact(entry: CacheIndexEntry): unknown {
@@ -188,8 +183,8 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
   const { fileKey } = parseFigmaUrl(options.sourceUrl);
   const nodeId = toCanonicalNodeId(options.nodeId);
   const extraArgs = options.extraArgs ?? {};
-  const argsHash = createHash('sha1').update(JSON.stringify(extraArgs)).digest('hex').slice(0, 12);
   const key = buildCacheKey(options.toolName, fileKey, nodeId, extraArgs);
+  const argsHash = key.split('__').at(-1) ?? '';
 
   const index = loadIndex();
   const existing = index.entries[key];
