@@ -29,6 +29,7 @@ function resolveMcpSource(): McpSource {
 
 // Preferred bridge binary path in the consumer project's node_modules.
 const BRIDGE_BIN = join(ROOT, 'node_modules', '.bin', 'figma-mcp-bridge');
+const DEFAULT_BRIDGE_NPX = 'npx -y @gethopp/figma-mcp-bridge';
 
 const DESKTOP_MCP_URL = process.env.FIGMA_MCP_DESKTOP_URL ?? 'http://127.0.0.1:3845/mcp';
 const CLOUD_MCP_URL = process.env.FIGMA_MCP_CLOUD_URL ?? '';
@@ -226,13 +227,27 @@ function extractBase64Image(content: unknown[]): string | null {
 
 function createTransport(source: McpSource) {
   if (source === 'bridge') {
-    const bridgeCommand = existsSync(BRIDGE_BIN) ? BRIDGE_BIN : 'figma-mcp-bridge';
+    const bridgeCmd = process.env.FIGMA_MCP_BRIDGE_CMD?.trim();
+    if (bridgeCmd) {
+      return new StdioClientTransport({
+        command: 'sh',
+        args: ['-lc', bridgeCmd],
+        stderr: 'inherit',
+      });
+    }
+    if (existsSync(BRIDGE_BIN)) {
+      return new StdioClientTransport({
+        command: BRIDGE_BIN,
+        args: [],
+        stderr: 'inherit',
+      });
+    }
     // The bridge uses stdio transport. It runs leader-election on port 1994:
     // if `npm run figma:bridge` is already running (and the Figma plugin is connected),
     // this subprocess becomes a follower and proxies requests through the leader.
     return new StdioClientTransport({
-      command: bridgeCommand,
-      args: [],
+      command: 'sh',
+      args: ['-lc', DEFAULT_BRIDGE_NPX],
       stderr: 'inherit',
     });
   }
@@ -256,7 +271,7 @@ export async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Prom
     const maybeErr = error as NodeJS.ErrnoException;
     if (source === 'bridge' && maybeErr?.code === 'ENOENT') {
       throw new Error(
-        'FIGMA_MCP_SOURCE=bridge requires the `figma-mcp-bridge` executable (local node_modules/.bin or on PATH). Install/start the bridge, or use FIGMA_MCP_SOURCE=desktop.'
+        'FIGMA_MCP_SOURCE=bridge could not start the bridge process. Set FIGMA_MCP_BRIDGE_CMD to a valid command (example: "npx -y @gethopp/figma-mcp-bridge"), or use FIGMA_MCP_SOURCE=desktop.'
       );
     }
     throw error;
@@ -534,7 +549,7 @@ async function main(): Promise<void> {
   console.log('  npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]');
   console.log('');
   console.log('  Set FIGMA_MCP_SOURCE=bridge|desktop|cloud to choose the MCP source.');
-  console.log('  With bridge: run `npm run figma:bridge` in a separate terminal first.');
+  console.log('  Optional: set FIGMA_MCP_BRIDGE_CMD (default: npx -y @gethopp/figma-mcp-bridge).');
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
