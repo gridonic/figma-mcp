@@ -49,6 +49,9 @@ async function runCommand() {
     case 'modules:setup':
       cmdDelegateToScript('modules-setup.ts', args);
       break;
+    case 'bridge:check':
+      cmdDelegateToScript('bridge-check.ts', args);
+      break;
     case 'info':
       cmdInfo();
       break;
@@ -236,6 +239,7 @@ function cmdHelp() {
   console.log('  cache warm                 Pre-populate cache from figma-links.yaml');
   console.log('  cache refresh              Force-refresh cache from Figma MCP');
   console.log('  cache get --url --node     Fetch and cache a single artifact');
+  console.log('  bridge:check               Check connection to local Figma MCP bridge');
   console.log('  tokens:sync                Sync color + typography tokens to SCSS files');
   console.log('  modules:setup              Run full setup pipeline (supports --debug-cache, --cache-root)');
   console.log('  info                       Show version and paths');

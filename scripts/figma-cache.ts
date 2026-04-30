@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 
-import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -27,7 +27,7 @@ function resolveMcpSource(): McpSource {
   return 'desktop';
 }
 
-// Path to the bridge binary in the consumer project's node_modules.
+// Preferred bridge binary path in the consumer project's node_modules.
 const BRIDGE_BIN = join(ROOT, 'node_modules', '.bin', 'figma-mcp-bridge');
 
 const DESKTOP_MCP_URL = process.env.FIGMA_MCP_DESKTOP_URL ?? 'http://127.0.0.1:3845/mcp';
@@ -226,11 +226,12 @@ function extractBase64Image(content: unknown[]): string | null {
 
 function createTransport(source: McpSource) {
   if (source === 'bridge') {
+    const bridgeCommand = existsSync(BRIDGE_BIN) ? BRIDGE_BIN : 'figma-mcp-bridge';
     // The bridge uses stdio transport. It runs leader-election on port 1994:
     // if `npm run figma:bridge` is already running (and the Figma plugin is connected),
     // this subprocess becomes a follower and proxies requests through the leader.
     return new StdioClientTransport({
-      command: BRIDGE_BIN,
+      command: bridgeCommand,
       args: [],
       stderr: 'inherit',
     });
@@ -249,7 +250,17 @@ export async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Prom
   const source = resolveMcpSource();
   const transport = createTransport(source);
   const client = new Client({ name: 'figma-cache', version: '1.0.0' }, { capabilities: {} });
-  await client.connect(transport);
+  try {
+    await client.connect(transport);
+  } catch (error) {
+    const maybeErr = error as NodeJS.ErrnoException;
+    if (source === 'bridge' && maybeErr?.code === 'ENOENT') {
+      throw new Error(
+        'FIGMA_MCP_SOURCE=bridge requires the `figma-mcp-bridge` executable (local node_modules/.bin or on PATH). Install/start the bridge, or use FIGMA_MCP_SOURCE=desktop.'
+      );
+    }
+    throw error;
+  }
   try {
     return await fn(client);
   } finally {

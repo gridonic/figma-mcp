@@ -72,6 +72,7 @@ npx figma-mcp cache clear
 npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]
 npx figma-mcp cache refresh [--config <path>] [--tool <tool>] [--node <nodeId>]
 npx figma-mcp cache get --url <figma-url> --node <nodeId> [--tool <tool>] [--refresh]
+npx figma-mcp bridge:check [--url <mcp-url>]
 npx figma-mcp tokens:sync [-y|--yes] [--debug] [--refresh]
 npx figma-mcp modules:setup
 npx figma-mcp info
@@ -127,6 +128,20 @@ Expected markers in target files:
 
 If markers are missing, sync fails with guidance.
 
+### `bridge:check`
+
+Checks if the local Figma MCP bridge is reachable and responding to MCP calls.
+
+```bash
+npx figma-mcp bridge:check
+```
+
+Optional custom endpoint:
+
+```bash
+npx figma-mcp bridge:check --url http://127.0.0.1:3845/mcp
+```
+
 ## NPM scripts injected by `init`
 
 `init` adds these scripts when absent:
@@ -174,6 +189,8 @@ http://127.0.0.1:3845/mcp
   - Add required marker blocks in your SCSS files.
 - MCP connection failures
   - Confirm Figma Desktop MCP is running on `127.0.0.1:3845`.
+- `FIGMA_MCP_SOURCE=bridge` + `ENOENT figma-mcp-bridge`
+  - Install/start `figma-mcp-bridge` (local `node_modules/.bin` or global PATH), or switch to `FIGMA_MCP_SOURCE=desktop`.
 
 ## License
 
