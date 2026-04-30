@@ -38,7 +38,7 @@ async function runCommand() {
       await cmdInit();
       break;
     case 'upgrade':
-      await cmdUpgrade();
+      await cmdUpgrade(args);
       break;
     case 'cache':
       cmdDelegateToScript('figma-cache.ts', args);
@@ -89,15 +89,45 @@ async function cmdInit() {
 // upgrade
 // ---------------------------------------------------------------------------
 
-async function cmdUpgrade() {
+async function cmdUpgrade(args) {
+  const rulesOnly = args.includes('--rules-only');
+  const installedVersion = getPackageVersion();
+  const latestTag = getLatestRemoteVersionTag();
+  const latestVersion = latestTag?.replace(/^v/, '') ?? null;
+
   console.log(c.bold('\n⭐️ figma-mcp upgrade\n'));
+  console.log(`  current: v${installedVersion}`);
+  if (latestTag) {
+    console.log(`  latest:  ${latestTag}\n`);
+  } else {
+    console.log(`  latest:  ${c.dim('(no version tags found; using main branch)')}\n`);
+  }
+
+  if (!rulesOnly) {
+    if (latestVersion && installedVersion === latestVersion) {
+      console.log(c.green('✓ figma-mcp is already on the latest published version.'));
+    } else {
+      const installTarget = latestTag
+        ? `figma-mcp@github:gridonic/figma-mcp#${latestTag}`
+        : 'figma-mcp@github:gridonic/figma-mcp';
+      console.log(`🔄 Installing ${installTarget} ...`);
+      execSync(`npm install "${installTarget}"`, {
+        cwd: PROJECT_ROOT,
+        stdio: 'inherit',
+      });
+      console.log(c.green(`\n✓ Updated figma-mcp${latestTag ? ` to ${latestTag}` : ''}`));
+    }
+  } else {
+    console.log(c.dim('Skipping package install (--rules-only).'));
+  }
+
   const count = copyCursorRules();
   console.log('');
   if (count === 0) {
     console.log(c.green('✓ Cursor rules already up to date.'));
-  } else {
-    console.log(c.green(`✓ Upgraded ${count} cursor rule(s).`));
+    return;
   }
+  console.log(c.green(`✓ Upgraded ${count} cursor rule(s).`));
 }
 
 // ---------------------------------------------------------------------------
@@ -214,7 +244,15 @@ function getPackageVersion() {
 }
 
 function cmdInfo() {
-  console.log(`ℹ️  figma-mcp v${getPackageVersion()}`);
+  const currentVersion = getPackageVersion();
+  console.log(`ℹ️  Installed version: v${currentVersion}`);
+  const latestTag = getLatestRemoteVersionTag();
+  if (latestTag) {
+    console.log(`ℹ️  Latest version: ${latestTag}`);
+  } else {
+    console.log(c.yellow('⚠️  Latest version tag: none found yet'));
+  }
+  console.log('ℹ️  Changelog: https://github.com/gridonic/figma-mcp/blob/main/CHANGELOG.md');
   console.log(`ℹ️  Package root: ${c.dim(PACKAGE_ROOT)}`);
   console.log(`ℹ️  Project root: ${c.dim(PROJECT_ROOT)}`);
 }
@@ -224,8 +262,8 @@ function cmdHelp() {
   console.log('Usage: npx figma-mcp <command> [options]\n');
   console.log('npm script wrapper: npm run figma-mcp -- <command> [options]\n');
   console.log('Commands:');
-  console.log('  init                       Copy cursor rules, create config template, add npm scripts');
-  console.log('  upgrade                    Re-copy cursor rules from package (picks up updates)');
+  console.log('  init                       Copy cursor rules, create config template, add npm wrapper script');
+  console.log('  upgrade [--rules-only]     Install latest published version and refresh cursor rules');
   console.log('  cache list                 List all cached Figma MCP artifacts');
   console.log('  cache clear                Delete entire local cache');
   console.log('  cache warm                 Pre-populate cache from figma-links.yaml');
@@ -235,6 +273,37 @@ function cmdHelp() {
   console.log('  modules:setup              Run full setup pipeline (supports --debug-cache, --cache-root)');
   console.log('  info                       Show version and paths');
   console.log('  help                       Show this help');
+}
+
+function getLatestRemoteVersionTag() {
+  const remoteTags = execSync(
+    'git ls-remote --tags https://github.com/gridonic/figma-mcp.git',
+    { encoding: 'utf8' }
+  );
+
+  const versionTags = remoteTags
+    .split('\n')
+    .filter((line) => line.trim())
+    .map((line) => line.split('\t')[1]?.replace('refs/tags/', ''))
+    .filter((tag) => tag && /^v\d+\.\d+\.\d+$/.test(tag))
+    .sort((a, b) => compareVersions(b.replace(/^v/, ''), a.replace(/^v/, '')));
+
+  if (versionTags.length === 0) {
+    return null;
+  }
+
+  return versionTags[0];
+}
+
+function compareVersions(a, b) {
+  const partsA = a.split('.').map(Number);
+  const partsB = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(partsA.length, partsB.length); i++) {
+    const numA = partsA[i] || 0;
+    const numB = partsB[i] || 0;
+    if (numA !== numB) return numA - numB;
+  }
+  return 0;
 }
 
 runCommand().catch((err) => {

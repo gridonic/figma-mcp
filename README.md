@@ -30,6 +30,12 @@ It provides:
 npm install figma-mcp@github:gridonic/figma-mcp
 ```
 
+After `init`, you can use a single wrapper script:
+
+```bash
+npm run figma-mcp -- <command>
+```
+
 ## Quick start
 
 1. Initialize workflow files in your project:
@@ -78,17 +84,38 @@ npx figma-mcp info
 npx figma-mcp help
 ```
 
+Equivalent npm wrapper usage:
+
+```text
+npm run figma-mcp -- upgrade
+npm run figma-mcp -- info
+```
+
 ### `init`
 
 `init`:
 
 - Copies package cursor rules into `.cursor/rules/`
 - Creates `.cursor/mcp/figma-links.yaml` from template (if missing)
-- Adds npm scripts to the target project's `package.json` (without overwriting existing keys)
+- Adds one npm wrapper script to the target project's `package.json` (without overwriting existing keys)
 
 ### `upgrade`
 
-`upgrade` re-copies the package rules to pick up updates in an existing project.
+`upgrade` updates to the latest published `figma-mcp` version, then re-copies package rules to pick up updates in an existing project.
+
+Use:
+
+```bash
+npm run figma-mcp -- upgrade
+```
+
+Optional:
+
+```bash
+npm run figma-mcp -- upgrade --rules-only
+```
+
+(`--rules-only` skips `npm install` and only refreshes rules.)
 
 ### `cache` subcommands
 
@@ -165,6 +192,41 @@ http://127.0.0.1:3845/mcp
 5. Run `npx figma-mcp tokens:sync --refresh`
 6. Run `npx figma-mcp modules:setup`
 7. Use Cursor rules to generate/update modules
+
+## Release and upgrade lifecycle
+
+### Maintainers (publish new version)
+
+1. Run `npm run release` in this repository.
+2. Follow the prompts to:
+   - bump `package.json` version
+   - update `CHANGELOG.md`
+   - create commit + `vX.Y.Z` tag
+3. Push commit and tag:
+
+```bash
+git push
+git push origin vX.Y.Z
+```
+
+### Consumers (get latest published version)
+
+After a new tag is published, run:
+
+```bash
+npm run figma-mcp -- upgrade
+```
+
+This command:
+
+- installs the latest tagged `figma-mcp` version
+- refreshes `.cursor/rules/` from the installed package
+
+If you only want to refresh rules without installing a new package version:
+
+```bash
+npm run figma-mcp -- upgrade --rules-only
+```
 
 ## Troubleshooting
 
