@@ -74,6 +74,13 @@ export function resolveCacheRoot(options: CacheLookupOptions = {}): string {
   return join(cwd, DEFAULT_CACHE_SUBPATH);
 }
 
+export function extractFileKey(url: string): string {
+  const clean = url.replace(/^@/, '');
+  const match = clean.match(/\/design\/([^/?#]+)/);
+  if (!match) throw new Error(`Could not extract fileKey from URL: ${url}`);
+  return match[1];
+}
+
 export function parseFigmaNodeIds(url: string): { topLevelNodeId: string; nestedNodeIds: string[] } {
   const matches = Array.from(url.matchAll(/[?&][a-z-]*node-id=(\d+)-(\d+)/gi));
   if (matches.length === 0) {

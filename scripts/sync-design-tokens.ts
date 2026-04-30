@@ -13,14 +13,15 @@
  */
 
 import { createInterface } from 'readline';
-import { readFileSync, writeFileSync } from 'fs';
+import { copyFileSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { getCachedOrFetch } from './figma-cache.js';
+import { extractFileKey, parseFigmaNodeIds } from './cache-lookup.js';
+import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
 const ROOT = process.cwd();
 
-const DEFAULT_CONFIG_PATH = join(ROOT, '.cursor/mcp/figma-links.yaml');
 const DEFAULT_COLORS_SCSS = join(ROOT, 'src/sass/root/_colors.scss');
 const DEFAULT_FONT_TYPES_SCSS = join(ROOT, 'src/sass/typography/_font-types.scss');
 
@@ -67,7 +68,7 @@ interface Paths {
 
 async function resolvePaths(): Promise<Paths> {
   const defaults: Paths = {
-    configPath: DEFAULT_CONFIG_PATH,
+    configPath: resolveConfigPath(process.argv.slice(2)),
     colorsScss: DEFAULT_COLORS_SCSS,
     fontTypesScss: DEFAULT_FONT_TYPES_SCSS,
   };
@@ -118,21 +119,25 @@ interface FigmaNodeConfig {
 }
 
 function loadFigmaConfig(configPath: string): FigmaNodeConfig {
-  const content = readFileSync(configPath, 'utf-8');
-  const colorsUrlMatch = content.match(/colors:\s*["'](@?https?:\/\/[^"']+)["']/);
-  const typographyUrlMatch = content.match(/typography:\s*["'](@?https?:\/\/[^"']+)["']/);
-  const colorsMatch = content.match(/colors:.*node-id=(\d+)-(\d+)/);
-  const typographyMatch = content.match(/typography:.*node-id=(\d+)-(\d+)/);
+  const config = loadFigmaLinksConfig(configPath);
+  const rawColors = config.styleguide?.colors ?? '';
+  const rawTypography = config.styleguide?.typography ?? '';
 
-  if (!colorsMatch || !typographyMatch || !colorsUrlMatch || !typographyUrlMatch) {
-    throw new Error(`Could not parse node IDs from ${configPath}`);
+  if (!rawColors || !rawColors.includes('figma.com/design/')) {
+    throw new Error(`styleguide.colors URL missing or invalid in ${configPath}`);
+  }
+  if (!rawTypography || !rawTypography.includes('figma.com/design/')) {
+    throw new Error(`styleguide.typography URL missing or invalid in ${configPath}`);
   }
 
+  const colorsUrl = stripAtPrefix(rawColors);
+  const typographyUrl = stripAtPrefix(rawTypography);
+
   return {
-    colorsNodeId: `${colorsMatch[1]}:${colorsMatch[2]}`,
-    typographyNodeId: `${typographyMatch[1]}:${typographyMatch[2]}`,
-    colorsUrl: colorsUrlMatch[1].replace(/^@/, ''),
-    typographyUrl: typographyUrlMatch[1].replace(/^@/, ''),
+    colorsNodeId: parseFigmaNodeIds(colorsUrl).topLevelNodeId,
+    typographyNodeId: parseFigmaNodeIds(typographyUrl).topLevelNodeId,
+    colorsUrl,
+    typographyUrl,
   };
 }
 
@@ -299,17 +304,24 @@ function updateScssSection(
   const endIdx = content.indexOf(endMarker);
 
   if (startIdx === -1 || endIdx === -1) {
+    throw new Error(`Markers not found in ${filePath}. Add:\n${startMarker}\n...\n${endMarker}`);
+  }
+  if (startIdx >= endIdx) {
     throw new Error(
-      `Markers not found in ${filePath}. Add:\n${startMarker}\n...\n${endMarker}`
+      `Markers out of order in ${filePath}: "${startMarker}" must appear before "${endMarker}".`
     );
   }
+
+  const backupPath = `${filePath}.figma-mcp.bak`;
+  copyFileSync(filePath, backupPath);
 
   const before = content.slice(0, startIdx + startMarker.length);
   const after = content.slice(endIdx);
   const updated = `${before}\n${newContent}\n  ${after}`;
   writeFileSync(filePath, updated);
+
   const displayPath = filePath.startsWith(ROOT) ? filePath.slice(ROOT.length).replace(/^\//, '') : filePath;
-  console.log(c.green('✓') + ` Updated ${c.dim(displayPath)}`);
+  console.log(c.green('✓') + ` Updated ${c.dim(displayPath)} ${c.dim(`(backup: ${displayPath}.figma-mcp.bak)`)}`);
 }
 
 async function main(): Promise<void> {

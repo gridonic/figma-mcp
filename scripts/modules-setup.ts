@@ -4,12 +4,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { getCachedOrFetch } from './figma-cache.js';
-import { normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot, validateModuleCache } from './cache-lookup.js';
+import { extractFileKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot, validateModuleCache } from './cache-lookup.js';
+import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
 const ROOT = process.cwd();
-
-const FIGMA_LINKS_PATH = join(ROOT, '.cursor/mcp/figma-links.yaml');
 
 type RequiredTool = 'get_screenshot' | 'get_design_context' | 'get_variable_defs';
 
@@ -70,47 +69,26 @@ function resolveAstroPath(moduleName: string): string {
   return join(ROOT, 'src/components', folder, fileName);
 }
 
-function parseFigmaUrl(url: string): { fileKey: string; nodeId: string } {
-  const clean = url.replace(/^@/, '');
-  const fileKeyMatch = clean.match(/\/design\/([^/]+)/);
-  const nodeMatch = clean.match(/[?&]node-id=(\d+)-(\d+)/);
-  if (!fileKeyMatch || !nodeMatch) {
-    throw new Error(`Could not parse fileKey/nodeId from URL: ${url}`);
-  }
-  return { fileKey: fileKeyMatch[1], nodeId: `${nodeMatch[1]}:${nodeMatch[2]}` };
-}
-
-function loadModulesFromFigmaLinks(path: string): ModuleTarget[] {
-  const raw = readFileSync(path, 'utf-8');
-  const lines = raw.split('\n');
+function loadModulesFromFigmaLinks(configPath: string): ModuleTarget[] {
+  const config = loadFigmaLinksConfig(configPath);
   const modules: ModuleTarget[] = [];
-  let inModules = false;
 
-  for (const line of lines) {
-    if (/^\s*modules:\s*$/.test(line)) {
-      inModules = true;
-      continue;
+  for (const [moduleName, rawUrl] of Object.entries(config.modules ?? {})) {
+    if (!rawUrl.startsWith('@http')) continue;
+    const figmaUrl = stripAtPrefix(rawUrl);
+    try {
+      const fileKey = extractFileKey(figmaUrl);
+      const { topLevelNodeId } = parseFigmaNodeIds(figmaUrl);
+      modules.push({
+        moduleName,
+        figmaUrl,
+        fileKey,
+        nodeId: topLevelNodeId,
+        astroPath: resolveAstroPath(moduleName),
+      });
+    } catch {
+      // skip entries with unparseable URLs
     }
-    if (inModules && /^\S/.test(line)) break;
-
-    if (!inModules) continue;
-
-    const match = line.match(/^\s{2}([a-z0-9-]+):\s*["']([^"']*)["']/i);
-    if (!match) continue;
-
-    const moduleName = match[1];
-    const figmaLink = match[2];
-    if (!figmaLink.startsWith('@http')) continue;
-
-    const figmaUrl = figmaLink.replace(/^@/, '');
-    const { fileKey, nodeId } = parseFigmaUrl(figmaUrl);
-    modules.push({
-      moduleName,
-      figmaUrl,
-      fileKey,
-      nodeId,
-      astroPath: resolveAstroPath(moduleName),
-    });
   }
 
   return modules;
@@ -155,6 +133,8 @@ async function ensureRequiredCache(
             toolName: tool,
             sourceUrl: moduleTarget.figmaUrl,
             nodeId,
+            allowFetchOnMiss: true,
+            name: moduleTarget.moduleName,
           });
         } catch {
           const prefix = nodeId === topNodeId ? '' : '[nested] ';
@@ -184,9 +164,11 @@ async function ensureRequiredCache(
 }
 
 async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  const options = parseArgs(argv);
+  const configPath = resolveConfigPath(argv);
   const cacheRoot = resolveCacheRoot({ cacheRoot: options.cacheRoot ?? undefined, cwd: ROOT });
-  const modules = loadModulesFromFigmaLinks(FIGMA_LINKS_PATH);
+  const modules = loadModulesFromFigmaLinks(configPath);
 
   if (options.runTokenSync) {
     console.log('\nStep: syncing design tokens...');
@@ -196,7 +178,7 @@ async function main(): Promise<void> {
   }
 
   if (modules.length === 0) {
-    console.log('No modules with @http links found in .cursor/mcp/figma-links.yaml');
+    console.log(`No modules with @http links found in ${configPath}`);
     return;
   }
 
@@ -243,11 +225,10 @@ async function main(): Promise<void> {
 
   const hasBlockingIssue = rows.some((row) => row.cache !== 'ok' || row.file === 'missing');
   if (hasBlockingIssue) {
-    process.exitCode = 1;
     console.log(
       '\nSetup is incomplete. Fix missing cache/artifacts (or run without --no-warm-cache) and ensure missing files are scaffolded.'
     );
-    return;
+    process.exit(1);
   }
 
   if (!options.runCreateModules) {

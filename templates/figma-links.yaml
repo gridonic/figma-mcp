@@ -5,6 +5,11 @@
 # Links without @ are still used by the scripts but are not treated as cache-warm targets.
 # Leave a value empty ("") to skip that module.
 
+# bridge.fileKey: required when using FIGMA_MCP_SOURCE=bridge with multiple Figma files open.
+# Run `npm run figma:bridge` and check the output for the exact file name (case-sensitive).
+bridge:
+  fileKey: ""
+
 styleguide:
   colors: ""
   typography: ""

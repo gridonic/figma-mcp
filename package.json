@@ -18,6 +18,11 @@
   "license": "ISC",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "tsx": "^4.19.4"
+    "js-yaml": "^4.1.1",
+    "tsx": "^4.19.4",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9"
   }
 }

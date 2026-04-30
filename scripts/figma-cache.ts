@@ -1,19 +1,41 @@
 #!/usr/bin/env npx tsx
 
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { buildCacheKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot } from './cache-lookup.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { buildCacheKey, extractFileKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot } from './cache-lookup.js';
+import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
 const ROOT = process.cwd();
 
-const MCP_URL = 'http://127.0.0.1:3845/mcp';
-const DEFAULT_CONFIG_PATH = join(ROOT, '.cursor/mcp/figma-links.yaml');
 const CACHE_ROOT = resolveCacheRoot({ cwd: ROOT });
 const INDEX_PATH = join(CACHE_ROOT, 'index.json');
 const ARTIFACTS_DIR = join(CACHE_ROOT, 'artifacts');
+
+// ---------------------------------------------------------------------------
+// MCP source configuration
+// ---------------------------------------------------------------------------
+
+type McpSource = 'desktop' | 'bridge' | 'cloud';
+
+function resolveMcpSource(): McpSource {
+  const src = process.env.FIGMA_MCP_SOURCE?.toLowerCase();
+  if (src === 'bridge' || src === 'cloud') return src;
+  return 'desktop';
+}
+
+// Path to the bridge binary in the consumer project's node_modules.
+const BRIDGE_BIN = join(ROOT, 'node_modules', '.bin', 'figma-mcp-bridge');
+
+const DESKTOP_MCP_URL = process.env.FIGMA_MCP_DESKTOP_URL ?? 'http://127.0.0.1:3845/mcp';
+const CLOUD_MCP_URL = process.env.FIGMA_MCP_CLOUD_URL ?? '';
+
+// ---------------------------------------------------------------------------
+// Tool types and bridge call translation
+// ---------------------------------------------------------------------------
 
 type ToolName =
   | 'get_screenshot'
@@ -21,6 +43,35 @@ type ToolName =
   | 'get_design_context'
   | 'get_metadata'
   | 'get_figjam';
+
+interface BridgeToolCall {
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+// Translates a canonical MCP tool call into the equivalent figma-mcp-bridge call.
+// The bridge uses the same names for most tools but has different argument shapes
+// and operates on the whole document (not per-node) for some tools.
+function toBridgeToolCall(canonicalName: ToolName, nodeId: string, bridgeFileKey?: string): BridgeToolCall {
+  const canonical = toCanonicalNodeId(nodeId);
+  const fk = bridgeFileKey ? { fileKey: bridgeFileKey } : {};
+  switch (canonicalName) {
+    case 'get_screenshot':
+      return { name: 'get_screenshot', arguments: { nodeIds: [canonical], ...fk } };
+    case 'get_variable_defs':
+      return { name: 'get_variable_defs', arguments: { ...fk } };
+    case 'get_design_context':
+      return { name: 'get_node', arguments: { nodeId: canonical, ...fk } };
+    case 'get_metadata':
+      return { name: 'get_metadata', arguments: { ...fk } };
+    case 'get_figjam':
+      return { name: 'get_document', arguments: { ...fk } };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cache index types
+// ---------------------------------------------------------------------------
 
 interface CacheIndexEntry {
   key: string;
@@ -49,14 +100,21 @@ interface FigmaTarget {
   nodeId: string;
 }
 
-interface GetCachedOrFetchOptions {
+export interface GetCachedOrFetchOptions {
   toolName: ToolName;
   sourceUrl: string;
   nodeId: string;
   extraArgs?: Record<string, unknown>;
   refresh?: boolean;
   allowFetchOnMiss?: boolean;
+  configPath?: string;
+  client?: Client;
+  name?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Colour helpers for terminal output
+// ---------------------------------------------------------------------------
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
@@ -64,6 +122,10 @@ const c = {
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
   yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
 };
+
+// ---------------------------------------------------------------------------
+// Cache index helpers
+// ---------------------------------------------------------------------------
 
 function ensureCacheDirs(): void {
   mkdirSync(CACHE_ROOT, { recursive: true });
@@ -94,31 +156,32 @@ function toCanonicalNodeId(nodeId: string): string {
 }
 
 function parseFigmaUrl(url: string): { fileKey: string; nodeId: string } {
-  const clean = url.replace(/^@/, '');
-  const fileKeyMatch = clean.match(/\/design\/([^/]+)/);
-  if (!fileKeyMatch) {
-    throw new Error(`Could not parse fileKey/nodeId from URL: ${url}`);
-  }
+  const clean = stripAtPrefix(url);
+  const fileKey = extractFileKey(clean);
   const { topLevelNodeId } = parseFigmaNodeIds(clean);
-  return {
-    fileKey: fileKeyMatch[1],
-    nodeId: topLevelNodeId,
-  };
+  return { fileKey, nodeId: topLevelNodeId };
 }
 
 function loadTargetsFromConfig(configPath: string): FigmaTarget[] {
-  const content = readFileSync(configPath, 'utf-8');
-  const lines = content.split('\n');
+  const config = loadFigmaLinksConfig(configPath);
   const targets: FigmaTarget[] = [];
-  for (const line of lines) {
-    const m = line.match(/^\s*([a-z0-9-]+):\s*["'](@?https?:\/\/[^"']+)["']/i);
-    if (!m) continue;
-    const name = m[1];
-    const url = m[2];
-    if (!url.includes('figma.com/design/')) continue;
-    const parsed = parseFigmaUrl(url);
-    targets.push({ name, url: url.replace(/^@/, ''), fileKey: parsed.fileKey, nodeId: parsed.nodeId });
+
+  const allEntries: Array<[string, string]> = [
+    ...Object.entries(config.styleguide ?? {}),
+    ...Object.entries(config.modules ?? {}),
+  ];
+
+  for (const [name, rawUrl] of allEntries) {
+    if (!rawUrl || !rawUrl.includes('figma.com/design/')) continue;
+    const url = stripAtPrefix(rawUrl);
+    try {
+      const parsed = parseFigmaUrl(url);
+      targets.push({ name, url, fileKey: parsed.fileKey, nodeId: parsed.nodeId });
+    } catch {
+      // skip entries with unparseable URLs
+    }
   }
+
   return targets;
 }
 
@@ -136,17 +199,55 @@ function extractBase64Image(content: unknown[]): string | null {
   for (const item of content) {
     if (!item || typeof item !== 'object') continue;
     const record = item as Record<string, unknown>;
-    const maybeData = record.data;
-    const maybeMime = record.mimeType;
-    if (typeof maybeData === 'string' && typeof maybeMime === 'string' && maybeMime.startsWith('image/')) {
-      return maybeData;
+
+    // Official Figma MCP: { type: "image", data: "<base64>", mimeType: "image/png" }
+    if (typeof record.data === 'string' && typeof record.mimeType === 'string' && record.mimeType.startsWith('image/')) {
+      return record.data;
+    }
+
+    // figma-mcp-bridge: { type: "text", text: '{"exports":[{"base64":"..."}]}' }
+    if (record.type === 'text' && typeof record.text === 'string') {
+      try {
+        const parsed = JSON.parse(record.text) as Record<string, unknown>;
+        const exports = Array.isArray(parsed.exports) ? parsed.exports : null;
+        const first = exports?.[0] as Record<string, unknown> | undefined;
+        if (typeof first?.base64 === 'string') return first.base64;
+      } catch {
+        // not a bridge screenshot payload — continue
+      }
     }
   }
   return null;
 }
 
-async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
+// ---------------------------------------------------------------------------
+// MCP client
+// ---------------------------------------------------------------------------
+
+function createTransport(source: McpSource) {
+  if (source === 'bridge') {
+    // The bridge uses stdio transport. It runs leader-election on port 1994:
+    // if `npm run figma:bridge` is already running (and the Figma plugin is connected),
+    // this subprocess becomes a follower and proxies requests through the leader.
+    return new StdioClientTransport({
+      command: BRIDGE_BIN,
+      args: [],
+      stderr: 'inherit',
+    });
+  }
+
+  const url = source === 'cloud' ? CLOUD_MCP_URL : DESKTOP_MCP_URL;
+  if (!url) {
+    throw new Error(
+      `No MCP URL configured for source "${source}". Set FIGMA_MCP_${source.toUpperCase()}_URL env var.`
+    );
+  }
+  return new StreamableHTTPClientTransport(new URL(url));
+}
+
+export async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
+  const source = resolveMcpSource();
+  const transport = createTransport(source);
   const client = new Client({ name: 'figma-cache', version: '1.0.0' }, { capabilities: {} });
   await client.connect(transport);
   try {
@@ -158,12 +259,21 @@ async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Promise<T> 
 
 async function callFigmaTool(
   client: Client,
-  toolName: ToolName,
+  canonicalToolName: ToolName,
   nodeId: string,
-  extraArgs: Record<string, unknown>
+  extraArgs: Record<string, unknown>,
+  bridgeFileKey?: string
 ): Promise<unknown> {
-  const result = await client.callTool({
-    name: toolName,
+  const source = resolveMcpSource();
+
+  if (source === 'bridge') {
+    const bridgeCall = toBridgeToolCall(canonicalToolName, nodeId, bridgeFileKey);
+    return client.callTool({ name: bridgeCall.name, arguments: bridgeCall.arguments });
+  }
+
+  // Official Figma MCP (desktop / cloud)
+  return client.callTool({
+    name: canonicalToolName,
     arguments: {
       nodeId: toCanonicalNodeId(nodeId),
       clientLanguages: 'typescript,scss,css,astro',
@@ -171,8 +281,11 @@ async function callFigmaTool(
       ...extraArgs,
     },
   });
-  return result;
 }
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
 
 export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promise<{
   data: unknown;
@@ -191,22 +304,40 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
   if (existing && !options.refresh) {
     return { data: readArtifact(existing), fromCache: true, cacheKey: key };
   }
-  if (!existing && !options.refresh && options.allowFetchOnMiss === false) {
+  if (!existing && !options.refresh && !options.allowFetchOnMiss) {
     throw new Error(
-      `Cache miss for ${options.toolName} ${nodeId}. Re-run with refresh mode to fetch from Figma MCP.`
+      `Cache miss for ${options.toolName} ${nodeId}. Re-run with refresh mode or set allowFetchOnMiss to fetch from MCP.`
     );
   }
 
-  const artifactDir = join(ARTIFACTS_DIR, key);
+  const dirName = options.name ? `${options.name}__${key}` : key;
+  const artifactDir = join(ARTIFACTS_DIR, dirName);
   mkdirSync(artifactDir, { recursive: true });
 
-  const result = await withMcpClient((client) => callFigmaTool(client, options.toolName, nodeId, extraArgs));
+  const configPath = options.configPath ?? resolveConfigPath(process.argv.slice(2));
+  const config = loadFigmaLinksConfig(configPath);
+  const bridgeFileKey = config.bridge?.fileKey || undefined;
+
+  const callWithClient = (client: Client) => callFigmaTool(client, options.toolName, nodeId, extraArgs, bridgeFileKey);
+  const result = options.client
+    ? await callWithClient(options.client)
+    : await withMcpClient(callWithClient);
   const now = new Date().toISOString();
 
   let payloadPath: string | undefined;
   let imagePath: string | undefined;
 
   const resultRecord = result as Record<string, unknown>;
+
+  if (resultRecord.isError === true) {
+    const content = Array.isArray(resultRecord.content) ? (resultRecord.content as unknown[]) : [];
+    const firstText = (content[0] as Record<string, unknown>)?.text;
+    const msg = typeof firstText === 'string' ? firstText : 'MCP tool returned an error';
+    throw new Error(
+      `[${options.toolName}] ${msg}${msg.toLowerCase().includes('not found') ? ' — is Figma open on the correct page?' : ''}`
+    );
+  }
+
   const content = Array.isArray(resultRecord.content) ? (resultRecord.content as unknown[]) : [];
   const maybeBase64 = extractBase64Image(content);
   if (maybeBase64) {
@@ -222,7 +353,7 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
     toolName: options.toolName,
     fileKey,
     nodeId,
-    sourceUrl: options.sourceUrl.replace(/^@/, ''),
+    sourceUrl: stripAtPrefix(options.sourceUrl),
     argsHash,
     artifactDir,
     payloadPath,
@@ -242,19 +373,24 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
   };
 }
 
+// ---------------------------------------------------------------------------
+// CLI helpers
+// ---------------------------------------------------------------------------
+
 function parseArgs(argv: string[]): Record<string, string | boolean> {
   const out: Record<string, string | boolean> = {};
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (!token.startsWith('--')) continue;
-    const key = token.slice(2);
-    const next = argv[i + 1];
-    if (!next || next.startsWith('--')) {
-      out[key] = true;
-      continue;
+    if (token.startsWith('--')) {
+      const key = token.slice(2);
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        out[key] = true;
+      } else {
+        out[key] = next;
+        i += 1;
+      }
     }
-    out[key] = next;
-    i += 1;
   }
   return out;
 }
@@ -272,6 +408,10 @@ function readToolName(value: string | boolean | undefined): ToolName {
   }
   return tool;
 }
+
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
 
 async function cmdList(): Promise<void> {
   const index = loadIndex();
@@ -305,6 +445,7 @@ async function cmdGet(parsed: Record<string, string | boolean>): Promise<void> {
     sourceUrl: url,
     nodeId: node,
     refresh,
+    allowFetchOnMiss: true,
   });
   console.log(
     `${result.fromCache ? c.yellow('cache') : c.green('fresh')} ${c.dim(toolName)} ${c.dim(node)} ${c.dim(result.cacheKey)}`
@@ -315,14 +456,17 @@ async function cmdGet(parsed: Record<string, string | boolean>): Promise<void> {
   }
 }
 
-async function cmdWarm(parsed: Record<string, string | boolean>): Promise<void> {
-  const configPath = typeof parsed.config === 'string' ? parsed.config : DEFAULT_CONFIG_PATH;
+async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[]): Promise<void> {
+  const configPath = typeof parsed.config === 'string' ? parsed.config : resolveConfigPath(argv);
   const refresh = parsed.refresh === true;
   const nodeFilter = typeof parsed.node === 'string' ? toCanonicalNodeId(parsed.node) : null;
   const toolFilter = parsed.tool ? readToolName(parsed.tool) : null;
   const tools: ToolName[] = toolFilter
     ? [toolFilter]
     : ['get_screenshot', 'get_variable_defs', 'get_design_context', 'get_metadata'];
+
+  const source = resolveMcpSource();
+  console.log(c.dim(`MCP source: ${source}`));
 
   const targets = loadTargetsFromConfig(configPath).filter((t) => (nodeFilter ? t.nodeId === nodeFilter : true));
   if (targets.length === 0) {
@@ -331,23 +475,33 @@ async function cmdWarm(parsed: Record<string, string | boolean>): Promise<void> 
   }
 
   console.log(c.cyan(`Warming cache for ${targets.length} targets...`));
-  for (const target of targets) {
-    for (const toolName of tools) {
-      try {
-        const res = await getCachedOrFetch({
-          toolName,
-          sourceUrl: target.url,
-          nodeId: target.nodeId,
-          refresh,
-        });
-        const state = res.fromCache ? 'cache' : 'fresh';
-        console.log(`- ${target.name} ${c.dim(target.nodeId)} ${toolName} ${c.dim(state)}`);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.log(c.yellow(`- ${target.name} ${toolName} failed: ${msg}`));
+
+  const runWarm = async (client?: Client) => {
+    for (const target of targets) {
+      for (const toolName of tools) {
+        try {
+          const res = await getCachedOrFetch({
+            toolName,
+            sourceUrl: target.url,
+            nodeId: target.nodeId,
+            refresh,
+            allowFetchOnMiss: true,
+            configPath,
+            client,
+            name: target.name,
+          });
+          const state = res.fromCache ? 'cache' : 'fresh';
+          console.log(`- ${target.name} ${c.dim(target.nodeId)} ${toolName} ${c.dim(state)}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(c.yellow(`- ${target.name} ${toolName} failed: ${msg}`));
+        }
       }
     }
-  }
+  };
+
+  // Single MCP connection for the entire warm run — cache hits short-circuit before using the client.
+  await withMcpClient((client) => runWarm(client));
 }
 
 async function main(): Promise<void> {
@@ -359,7 +513,7 @@ async function main(): Promise<void> {
   if (command === 'get') return cmdGet(parsed);
   if (command === 'warm' || command === 'refresh') {
     if (command === 'refresh') parsed.refresh = true;
-    return cmdWarm(parsed);
+    return cmdWarm(parsed, rest);
   }
 
   console.log('Usage:');
@@ -367,6 +521,9 @@ async function main(): Promise<void> {
   console.log('  npx figma-mcp cache clear');
   console.log('  npx figma-mcp cache get --url <figma-url> --node <nodeId> [--tool get_screenshot] [--refresh]');
   console.log('  npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]');
+  console.log('');
+  console.log('  Set FIGMA_MCP_SOURCE=bridge|desktop|cloud to choose the MCP source.');
+  console.log('  With bridge: run `npm run figma:bridge` in a separate terminal first.');
 }
 
 if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, '/'))) {
