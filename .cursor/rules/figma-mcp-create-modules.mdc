@@ -71,7 +71,7 @@ Cache behavior (cache-required):
 
 - Use cache artifacts as the required source for all artifacts.
 - Do not call Figma MCP tools directly when a cache artifact is missing.
-- If any required cache entry is missing, stop the entire processing loop immediately and warn the user to run `npm run figma:cache:warm` or `npm run figma:cache:refresh`, then rerun this rule.
+- If any required cache entry is missing, stop the entire processing loop immediately and warn the user to run `npm run figma-mcp -- cache warm --refresh`, then rerun this rule.
 - Refresh/update of the persistent cache remains explicit and user-triggered only.
 
 Design-intent extraction (required):
@@ -142,9 +142,9 @@ Subagent output contract:
 - If validation fails and cannot be resolved, use:
   - `module-name | ✗ skipped | grid validation failed (unknown grid-column token or misalignment)`
 - If any required artifact is missing in cache, do not call Figma MCP directly and stop the entire processing loop immediately.
-- When stopping due to missing cache artifacts, warn the user to run a cache population/update script first (for example `npm run figma:cache:warm` or `npm run figma:cache:refresh`) and then rerun this rule.
+- When stopping due to missing cache artifacts, warn the user to run a cache population/update script first (for example `npm run figma-mcp -- cache warm --refresh`) and then rerun this rule.
 - Use this status line for the module where the cache miss is detected:
-  - `module-name | ✗ skipped | missing required figma artifact(s): <artifact-list>; run npm run figma:cache:warm (or npm run figma:cache:refresh) and rerun`
+  - `module-name | ✗ skipped | missing required figma artifact(s): <artifact-list>; run npm run figma-mcp -- cache warm --refresh and rerun`
 - In the one-sentence summary for implemented modules, include one explicit lane decision (example: `title -> grid-width`) to make intent decisions auditable.
 
 ---

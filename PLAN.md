@@ -45,7 +45,7 @@ Node.js CLI script (like `dastro.js`) exposed via `bin` in `package.json`.
 
 | Command | What it does |
 |---|---|
-| `figma-mcp init` | Copies cursor rules to `.cursor/rules/`, creates `.cursor/mcp/figma-links.yaml` from template, adds npm scripts to `package.json` |
+| `figma-mcp init` | Copies cursor rules to `.cursor/rules/`, creates `.cursor/mcp/figma-links.yaml` from template, adds a single npm wrapper script to `package.json` |
 | `figma-mcp upgrade` | Re-copies cursor rules from `node_modules/figma-mcp/.cursor/rules/` (picks up rule updates) |
 | `figma-mcp cache list` | List all cached Figma MCP artifacts |
 | `figma-mcp cache clear` | Delete entire cache |
@@ -59,17 +59,11 @@ Node.js CLI script (like `dastro.js`) exposed via `bin` in `package.json`.
 
 ---
 
-## npm scripts added to consuming project on `init`
+## npm script added to consuming project on `init`
 
 ```json
 {
-  "tokens:sync": "npx tsx scripts/figma-cache.ts",
-  "figma:cache:list": "npx figma-mcp cache list",
-  "figma:cache:clear": "npx figma-mcp cache clear",
-  "figma:cache:warm": "npx figma-mcp cache warm",
-  "figma:cache:refresh": "npx figma-mcp cache refresh",
-  "figma:cache:get": "npx figma-mcp cache get",
-  "modules:setup": "npx figma-mcp modules:setup"
+  "figma-mcp": "npx figma-mcp"
 }
 ```
 
@@ -117,7 +111,7 @@ npx figma-mcp init
 `init` does:
 1. Copy all `figma-mcp-*.mdc` and `figma-design-module.mdc` rules from `node_modules/figma-mcp/.cursor/rules/` → `.cursor/rules/`
 2. Create `.cursor/mcp/figma-links.yaml` from `templates/figma-links.yaml` (skip if already exists)
-3. Inject npm scripts into project `package.json` (skip any that already exist)
+3. Inject one npm wrapper script into project `package.json` (skip if it already exists)
 
 ---
 

@@ -6,7 +6,7 @@
 # Leave a value empty ("") to skip that module.
 
 # bridge.fileKey: required when using FIGMA_MCP_SOURCE=bridge with multiple Figma files open.
-# Run `npm run figma:bridge` and check the output for the exact file name (case-sensitive).
+# Run your bridge command and check the output for the exact file name (case-sensitive).
 bridge:
   fileKey: ""
 

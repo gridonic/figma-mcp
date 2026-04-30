@@ -166,13 +166,7 @@ function addNpmScripts() {
   pkg.scripts = pkg.scripts ?? {};
 
   const toAdd = {
-    'tokens:sync': 'npx figma-mcp tokens:sync',
-    'figma:cache:list': 'npx figma-mcp cache list',
-    'figma:cache:clear': 'npx figma-mcp cache clear',
-    'figma:cache:warm': 'npx figma-mcp cache warm',
-    'figma:cache:refresh': 'npx figma-mcp cache refresh',
-    'figma:cache:get': 'npx figma-mcp cache get',
-    'modules:setup': 'npx figma-mcp modules:setup',
+    'figma-mcp': 'npx figma-mcp',
   };
 
   let added = 0;
@@ -228,6 +222,7 @@ function cmdInfo() {
 function cmdHelp() {
   console.log(c.bold(`⭐️ figma-mcp v${getPackageVersion()}\n`));
   console.log('Usage: npx figma-mcp <command> [options]\n');
+  console.log('npm script wrapper: npm run figma-mcp -- <command> [options]\n');
   console.log('Commands:');
   console.log('  init                       Copy cursor rules, create config template, add npm scripts');
   console.log('  upgrade                    Re-copy cursor rules from package (picks up updates)');

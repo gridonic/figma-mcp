@@ -127,20 +127,22 @@ Expected markers in target files:
 
 If markers are missing, sync fails with guidance.
 
-## NPM scripts injected by `init`
+## NPM script injected by `init`
 
-`init` adds these scripts when absent:
+`init` adds this script when absent:
 
 ```json
 {
-  "tokens:sync": "npx figma-mcp tokens:sync",
-  "figma:cache:list": "npx figma-mcp cache list",
-  "figma:cache:clear": "npx figma-mcp cache clear",
-  "figma:cache:warm": "npx figma-mcp cache warm",
-  "figma:cache:refresh": "npx figma-mcp cache refresh",
-  "figma:cache:get": "npx figma-mcp cache get",
-  "modules:setup": "npx figma-mcp modules:setup"
+  "figma-mcp": "npx figma-mcp"
 }
+```
+
+Use it like this:
+
+```bash
+npm run figma-mcp -- cache warm --refresh
+npm run figma-mcp -- tokens:sync --refresh
+npm run figma-mcp -- modules:setup
 ```
 
 ## Requirements
