@@ -1,3 +1,7 @@
+## [1.0.1](https://github.com/gridonic/figma-mcp/compare/v1.0.0...v1.0.1)
+
+- init
+
 # Changelog
 
 ## Unreleased

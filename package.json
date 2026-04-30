@@ -1,6 +1,6 @@
 {
   "name": "figma-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Figma MCP → Astro components workflow: cursor rules, cache management, and design token sync",
   "type": "module",
   "bin": {
