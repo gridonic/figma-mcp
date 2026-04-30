@@ -1,5 +1,5 @@
 import { createHash } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 export type CacheToolName =
@@ -45,6 +45,8 @@ export interface ModuleArtifactFailure {
   scope: 'top-level' | 'nested';
   nodeId: string;
   toolName: CacheToolName;
+  checkedPaths: string[];
+  missingFiles: string[];
   message: string;
 }
 
@@ -56,11 +58,34 @@ export interface ModuleCacheValidationResult {
   debug: string[];
 }
 
+export interface ResolvedCacheArtifacts {
+  ready: boolean;
+  found: string[];
+  missing: string[];
+  candidates: string[];
+  lookupMode: 'direct-fs';
+}
+
 const DEFAULT_CACHE_SUBPATH = '.cursor/tmp/figma-mcp-cache';
 const CACHE_ROOT_ENV_KEYS = ['FIGMA_MCP_CACHE_ROOT', 'FIGMA_CACHE_ROOT'] as const;
 
 export function normalizeNodeId(nodeId: string): string {
   return nodeId.trim().replace('-', ':');
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function nodeIdVariants(nodeId: string): string[] {
+  const canonical = normalizeNodeId(nodeId);
+  return unique([canonical, canonical.replace(':', '-')]);
+}
+
+function requiredArtifactFile(toolName: CacheToolName): string | null {
+  if (toolName === 'get_screenshot') return 'image.png';
+  if (toolName === 'get_design_context' || toolName === 'get_variable_defs') return 'payload.json';
+  return null;
 }
 
 export function resolveCacheRoot(options: CacheLookupOptions = {}): string {
@@ -82,7 +107,7 @@ export function extractFileKey(url: string): string {
 }
 
 export function parseFigmaNodeIds(url: string): { topLevelNodeId: string; nestedNodeIds: string[] } {
-  const matches = Array.from(url.matchAll(/[?&][a-z-]*node-id=(\d+)-(\d+)/gi));
+  const matches = Array.from(url.matchAll(/[?&][a-z-]*node-id=(\d+)[-:](\d+)/gi));
   if (matches.length === 0) {
     throw new Error(`Could not parse node-id from URL: ${url}`);
   }
@@ -145,8 +170,67 @@ export function lookupArtifact(
   return { key, hit: false, source: 'missing' };
 }
 
+export function resolveCacheArtifacts(
+  cacheRoot: string,
+  moduleName: string,
+  fileKey: string,
+  nodeId: string,
+  toolName: CacheToolName
+): ResolvedCacheArtifacts {
+  const requiredFile = requiredArtifactFile(toolName);
+  if (!requiredFile) {
+    return { ready: true, found: [], missing: [], candidates: [], lookupMode: 'direct-fs' };
+  }
+
+  const artifactsRoot = join(cacheRoot, 'artifacts');
+  const nodeVariants = nodeIdVariants(nodeId);
+  const canonicalNode = normalizeNodeId(nodeId).replace(':', '-');
+  const prefixes = unique([
+    ...nodeVariants.map((variant) => `${fileKey}__${variant.replace(':', '-')}__${toolName}__`),
+    `${fileKey}__${canonicalNode}__${toolName}__`,
+    ...nodeVariants.map((variant) => `${moduleName}__${fileKey}__${variant.replace(':', '-')}__${toolName}__`),
+    `${moduleName}__${fileKey}__${canonicalNode}__${toolName}__`,
+  ]);
+
+  const candidateDirs: string[] = [];
+  if (existsSync(artifactsRoot)) {
+    const dirEntries = readdirSync(artifactsRoot, { withFileTypes: true });
+    for (const entry of dirEntries) {
+      if (!entry.isDirectory()) continue;
+      if (prefixes.some((prefix) => entry.name.startsWith(prefix))) {
+        candidateDirs.push(join(artifactsRoot, entry.name));
+      }
+    }
+  }
+
+  // Direct deterministic fallback for canonical key if directory listing misses.
+  const canonicalKey = buildCacheKey(toolName, fileKey, nodeId, {});
+  candidateDirs.push(join(artifactsRoot, canonicalKey));
+
+  const candidates = unique(candidateDirs);
+  const found: string[] = [];
+  const missing: string[] = [];
+  for (const dir of candidates) {
+    const requiredPath = join(dir, requiredFile);
+    if (existsSync(requiredPath)) {
+      found.push(requiredPath);
+    } else {
+      missing.push(requiredPath);
+    }
+  }
+
+  return {
+    ready: found.length > 0,
+    found,
+    missing,
+    candidates,
+    lookupMode: 'direct-fs',
+  };
+}
+
 export function validateModuleCache(params: {
   cacheRoot: string;
+  moduleName: string;
   figmaUrl: string;
   fileKey: string;
   topLevelNodeId: string;
@@ -156,7 +240,6 @@ export function validateModuleCache(params: {
   const topLevelNodeId = normalizeNodeId(params.topLevelNodeId);
   const parsed = parseFigmaNodeIds(params.figmaUrl);
   const nestedNodeIds = parsed.nestedNodeIds.map(normalizeNodeId).filter((id) => id !== topLevelNodeId);
-  const index = loadCacheIndex(params.cacheRoot);
   const failures: ModuleArtifactFailure[] = [];
   const debug: string[] = [];
 
@@ -165,32 +248,53 @@ export function validateModuleCache(params: {
   };
 
   record(`cacheRoot=${params.cacheRoot}`);
+  record(`moduleName=${params.moduleName}`);
+  record(`lookupMode=direct-fs`);
+  record(`requested fileKey=${params.fileKey}`);
   record(`topLevelNodeId=${topLevelNodeId}`);
   record(`nestedNodeIds=${nestedNodeIds.join(',') || '(none)'}`);
 
   for (const toolName of params.requiredTools) {
-    const top = lookupArtifact(index, params.cacheRoot, toolName, params.fileKey, topLevelNodeId);
-    record(`lookup top-level ${toolName} node=${topLevelNodeId} key=${top.key} hit=${top.hit} source=${top.source}`);
-    if (!top.hit) {
+    const top = resolveCacheArtifacts(params.cacheRoot, params.moduleName, params.fileKey, topLevelNodeId, toolName);
+    record(
+      `lookup top-level ${toolName} module=${params.moduleName} fileKey=${params.fileKey} node=${topLevelNodeId} ready=${top.ready}`
+    );
+    for (const candidatePath of top.candidates) record(`candidate top-level ${toolName}: ${candidatePath}`);
+    for (const foundPath of top.found) record(`found top-level ${toolName}: ${foundPath}`);
+    for (const missingPath of top.missing) record(`missing top-level ${toolName}: ${missingPath}`);
+    if (!top.ready) {
       failures.push({
         scope: 'top-level',
         nodeId: topLevelNodeId,
         toolName,
-        message: `missing required artifact: ${toolName} for node ${topLevelNodeId} (cacheRoot=${params.cacheRoot})`,
+        checkedPaths: top.candidates,
+        missingFiles: top.missing,
+        message:
+          `missing required artifact: ${toolName} for node ${topLevelNodeId} ` +
+          `(module=${params.moduleName}, fileKey=${params.fileKey}, cacheRoot=${params.cacheRoot}, lookupMode=${top.lookupMode})`,
       });
     }
   }
 
   for (const nestedNodeId of nestedNodeIds) {
     for (const toolName of params.requiredTools) {
-      const nested = lookupArtifact(index, params.cacheRoot, toolName, params.fileKey, nestedNodeId);
-      record(`lookup nested ${toolName} node=${nestedNodeId} key=${nested.key} hit=${nested.hit} source=${nested.source}`);
-      if (!nested.hit) {
+      const nested = resolveCacheArtifacts(params.cacheRoot, params.moduleName, params.fileKey, nestedNodeId, toolName);
+      record(
+        `lookup nested ${toolName} module=${params.moduleName} fileKey=${params.fileKey} node=${nestedNodeId} ready=${nested.ready}`
+      );
+      for (const candidatePath of nested.candidates) record(`candidate nested ${toolName}: ${candidatePath}`);
+      for (const foundPath of nested.found) record(`found nested ${toolName}: ${foundPath}`);
+      for (const missingPath of nested.missing) record(`missing nested ${toolName}: ${missingPath}`);
+      if (!nested.ready) {
         failures.push({
           scope: 'nested',
           nodeId: nestedNodeId,
           toolName,
-          message: `missing required artifact: ${toolName} for node ${nestedNodeId} (cacheRoot=${params.cacheRoot})`,
+          checkedPaths: nested.candidates,
+          missingFiles: nested.missing,
+          message:
+            `missing required artifact: ${toolName} for node ${nestedNodeId} ` +
+            `(module=${params.moduleName}, fileKey=${params.fileKey}, cacheRoot=${params.cacheRoot}, lookupMode=${nested.lookupMode})`,
         });
       }
     }

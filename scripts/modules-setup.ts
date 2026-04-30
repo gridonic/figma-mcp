@@ -147,6 +147,7 @@ async function ensureRequiredCache(
 
   const result = validateModuleCache({
     cacheRoot: options.cacheRoot,
+    moduleName: moduleTarget.moduleName,
     figmaUrl: moduleTarget.figmaUrl,
     fileKey: moduleTarget.fileKey,
     topLevelNodeId: topNodeId,
@@ -158,9 +159,14 @@ async function ensureRequiredCache(
       console.log(`[cache-debug] ${line}`);
     }
   }
-  return result.failures.map((failure) =>
-    failure.scope === 'nested' ? `[nested] ${failure.message}` : failure.message
-  );
+  return result.failures.map((failure) => {
+    const details = [
+      failure.message,
+      `checked=${failure.checkedPaths.join(',') || '(none)'}`,
+      `missing=${failure.missingFiles.join(',') || '(none)'}`,
+    ].join(' | ');
+    return failure.scope === 'nested' ? `[nested] ${details}` : details;
+  });
 }
 
 async function main(): Promise<void> {
