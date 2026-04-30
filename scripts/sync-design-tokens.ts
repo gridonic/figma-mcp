@@ -15,6 +15,7 @@
 import { createInterface } from 'readline';
 import { copyFileSync, readFileSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { getCachedOrFetch } from './figma-cache.js';
 import { extractFileKey, parseFigmaNodeIds } from './cache-lookup.js';
 import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
@@ -217,17 +218,17 @@ interface FontProps {
   letterSpacing: number;
 }
 
-function parseFontString(str: string): FontProps | null {
+export function parseFontString(str: string): FontProps | null {
   const m = str.match(
-    /Font\(family:\s*"([^"]+)",\s*style:\s*\w+,\s*size:\s*([\d.]+),\s*weight:\s*(\d+),\s*lineHeight:\s*([\d.]+),\s*letterSpacing:\s*(-?[\d.]+)\)/
+    /Font\(family:\s*"([^"]+)",\s*style:\s*([^,]+),\s*size:\s*([\d.]+),\s*weight:\s*(\d+),\s*lineHeight:\s*([\d.]+),\s*letterSpacing:\s*(-?[\d.]+)\)/
   );
   if (!m) return null;
   return {
     fontFamily: m[1],
-    fontSize: parseFloat(m[2]),
-    fontWeight: parseInt(m[3], 10),
-    lineHeight: parseFloat(m[4]),
-    letterSpacing: parseFloat(m[5]),
+    fontSize: parseFloat(m[3]),
+    fontWeight: parseInt(m[4], 10),
+    lineHeight: parseFloat(m[5]),
+    letterSpacing: parseFloat(m[6]),
   };
 }
 
@@ -415,7 +416,11 @@ async function main(): Promise<void> {
   console.log(c.green(`Done.`) + ` (${c.dim(elapsed + 'ms')})`);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+const isDirectRun = Boolean(process.argv[1]) && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isDirectRun) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
