@@ -2,13 +2,14 @@
 
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   writeFileSync,
 } from 'fs';
-import { dirname, join } from 'path';
+import { dirname, join, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, execFileSync } from 'child_process';
 
@@ -69,11 +70,12 @@ async function cmdInit() {
   console.log(c.bold('\n⭐️ figma-mcp init\n'));
 
   const rulesCopied = copyCursorRules();
+  const skillsCopied = copyClaudeSkills();
   const configCreated = createConfigTemplate();
   const scriptsAdded = addNpmScripts();
 
   console.log('');
-  if (rulesCopied + scriptsAdded + (configCreated ? 1 : 0) === 0) {
+  if (rulesCopied + skillsCopied + scriptsAdded + (configCreated ? 1 : 0) === 0) {
     console.log(c.green('✓ Already up to date — nothing to do.'));
   } else {
     console.log(c.green('✓ Done.'));
@@ -121,13 +123,23 @@ async function cmdUpgrade(args) {
     console.log(c.dim('Skipping package install (--rules-only).'));
   }
 
-  const count = copyCursorRules();
+  const ruleCount = copyCursorRules();
+  const skillCount = rulesOnly ? 0 : copyClaudeSkills();
   console.log('');
-  if (count === 0) {
-    console.log(c.green('✓ Cursor rules already up to date.'));
+  if (ruleCount === 0 && skillCount === 0) {
+    console.log(
+      c.green(
+        rulesOnly
+          ? '✓ Cursor rules already up to date.'
+          : '✓ Cursor rules and Claude skills already up to date.'
+      )
+    );
     return;
   }
-  console.log(c.green(`✓ Upgraded ${count} cursor rule(s).`));
+  const parts = [];
+  if (ruleCount > 0) parts.push(`${ruleCount} cursor rule(s)`);
+  if (skillCount > 0) parts.push(`${skillCount} Claude skill folder(s)`);
+  console.log(c.green(`✓ Upgraded ${parts.join(' and ')}.`));
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +170,42 @@ function copyCursorRules() {
   for (const file of ruleFiles) {
     copyFileSync(join(sourceRulesPath, file), join(targetRulesPath, file));
     console.log(`  📄 ${file}`);
+    copied++;
+  }
+
+  return copied;
+}
+
+/** Copy bundled Claude Code skills from the package into the project (.claude/skills/<name>/). */
+function copyClaudeSkills() {
+  const sourceSkillsPath = join(PACKAGE_ROOT, '.claude/skills');
+  const targetSkillsPath = join(PROJECT_ROOT, '.claude/skills');
+
+  if (!existsSync(sourceSkillsPath)) {
+    console.log(c.yellow('⚠️  No Claude skills found in package, skipping.'));
+    return 0;
+  }
+
+  const entries = readdirSync(sourceSkillsPath, { withFileTypes: true });
+  const skillDirs = entries.filter((e) => e.isDirectory());
+  if (skillDirs.length === 0) {
+    console.log(c.yellow('⚠️  No skill folders under .claude/skills, skipping.'));
+    return 0;
+  }
+
+  mkdirSync(targetSkillsPath, { recursive: true });
+
+  let copied = 0;
+  for (const dir of skillDirs) {
+    const name = dir.name;
+    const from = resolve(join(sourceSkillsPath, name));
+    const to = resolve(join(targetSkillsPath, name));
+    if (from === to) {
+      console.log(`  ${c.dim('skip')} .claude/skills/${name}/ ${c.dim('(package is project cwd)')}`);
+      continue;
+    }
+    cpSync(from, to, { recursive: true, force: true });
+    console.log(`  📄 .claude/skills/${name}/`);
     copied++;
   }
 
@@ -262,8 +310,8 @@ function cmdHelp() {
   console.log('Usage: npx figma-mcp <command> [options]\n');
   console.log('npm script wrapper: npm run figma-mcp -- <command> [options]\n');
   console.log('Commands:');
-  console.log('  init                       Copy cursor rules, create config template, add npm wrapper script');
-  console.log('  upgrade [--rules-only]     Install latest published version and refresh cursor rules');
+  console.log('  init                       Copy cursor rules + Claude skills, config template, npm script');
+  console.log('  upgrade [--rules-only]     Install latest published version and refresh rules + skills');
   console.log('  cache list                 List all cached Figma MCP artifacts');
   console.log('  cache clear                Delete entire local cache');
   console.log('  cache warm                 Pre-populate cache from figma-links.yaml');

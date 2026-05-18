@@ -7,12 +7,14 @@
     "figma-mcp": "scripts/figma-mcp.js"
   },
   "files": [
+    ".claude",
     ".cursor",
     "scripts",
     "templates"
   ],
   "scripts": {
-    "release": "node scripts/release.js"
+    "release": "node scripts/release.js",
+    "figma-mcp": "npx figma-mcp"
   },
   "author": "",
   "license": "ISC",
