@@ -1,3 +1,7 @@
+## [1.0.6](https://github.com/gridonic/figma-mcp/compare/v1.0.5...v1.0.6)
+
+- improve cache
+
 ## [1.0.5](https://github.com/gridonic/figma-mcp/compare/v1.0.4...v1.0.5)
 
 - improve cache
