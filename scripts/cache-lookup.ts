@@ -71,7 +71,7 @@ export interface ModuleManifestNode {
   name?: string;
   type?: string;
   path?: string[];
-  source: 'source' | 'discovered' | 'hint';
+  source: 'source' | 'discovered' | 'hint' | 'sparse';
 }
 
 export interface ModuleManifest {
@@ -83,8 +83,16 @@ export interface ModuleManifest {
   sourceNode: ModuleManifestNode;
   childNodes: ModuleManifestNode[];
   explicitChildNodeHints: string[];
+  sparseChildNodeHints: string[];
   complete: boolean;
+  incompleteReasons: string[];
   warnings: string[];
+  autoFetchedChildNodes: string[];
+  missingChildNodes: string[];
+  sparseDetection: {
+    detected: boolean;
+    reasons: string[];
+  };
   rawPayloadPaths: string[];
   sharedVariableArtifact?: {
     key: string;
@@ -501,12 +509,22 @@ export function createModuleManifest(params: {
   sourceNodeId: string;
   designContext: unknown;
   updatedAt?: string;
+  sparseChildNodeHints?: string[];
+  autoFetchedChildNodes?: string[];
+  missingChildNodes?: string[];
+  sparseDetectionReasons?: string[];
 }): ModuleManifest {
   const sourceNodeId = normalizeNodeId(params.sourceNodeId);
   const parsed = parseFigmaNodeIds(params.sourceUrl);
   const explicitChildNodeHints = parsed.nestedNodeIds.map(normalizeNodeId).filter((id) => id !== sourceNodeId);
+  const sparseChildNodeHints = (params.sparseChildNodeHints ?? [])
+    .map(normalizeNodeId)
+    .filter((id) => id !== sourceNodeId);
   const discovery = discoverChildNodesFromPayload(params.designContext, sourceNodeId);
   const byId = new Map(discovery.childNodes.map((node) => [node.nodeId, node]));
+  for (const hint of sparseChildNodeHints) {
+    if (!byId.has(hint)) byId.set(hint, { nodeId: hint, source: 'sparse' });
+  }
   for (const hint of explicitChildNodeHints) {
     if (!byId.has(hint)) byId.set(hint, { nodeId: hint, source: 'hint' });
   }
@@ -548,8 +566,25 @@ export function createModuleManifest(params: {
     'get_variable_defs'
   );
   const warnings = [...discovery.warnings];
+  const incompleteReasons: string[] = [];
+  const autoFetchedChildNodes = unique((params.autoFetchedChildNodes ?? []).map(normalizeNodeId)).filter(
+    (id) => id !== sourceNodeId
+  );
+  const missingChildNodes = unique((params.missingChildNodes ?? []).map(normalizeNodeId)).filter((id) => id !== sourceNodeId);
+  const sparseDetectionReasons = unique((params.sparseDetectionReasons ?? []).filter((reason) => reason.trim().length > 0));
+  const sparseDetected = sparseDetectionReasons.length > 0;
   if (explicitChildNodeHints.length > 0) {
     warnings.push('Explicit nested node ids were treated as discovery hints, not readiness requirements.');
+  }
+  if (missingChildNodes.length > 0) {
+    incompleteReasons.push(`Missing child-node design context for: ${missingChildNodes.join(', ')}`);
+    warnings.push('Some sparse child nodes could not be warmed automatically; module generation may need partial fallback.');
+  }
+  if (sparseDetected && sparseChildNodeHints.length === 0) {
+    incompleteReasons.push('Sparse source-node design context detected but no child node ids could be extracted.');
+  }
+  if (!sparseDetected && !discovery.complete) {
+    incompleteReasons.push('Source-node design context payload was not rich enough to discover child nodes reliably.');
   }
 
   return {
@@ -561,8 +596,16 @@ export function createModuleManifest(params: {
     sourceNode,
     childNodes,
     explicitChildNodeHints,
-    complete: discovery.complete,
+    sparseChildNodeHints,
+    complete: incompleteReasons.length === 0,
+    incompleteReasons,
     warnings,
+    autoFetchedChildNodes,
+    missingChildNodes,
+    sparseDetection: {
+      detected: sparseDetected,
+      reasons: sparseDetectionReasons,
+    },
     rawPayloadPaths: sourceContext.found,
     sharedVariableArtifact: sharedVariables.found.length
       ? {

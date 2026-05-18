@@ -24,6 +24,7 @@
 
 ## Unreleased
 
+- Sparse source-node design context now auto-warms direct child design contexts during cache warm, with manifest metadata for auto-fetched/missing children and incomplete reasons.
 - Fixed cache validation false-negatives in `modules:setup` caused by ad-hoc key checks and mixed node-id formats (`7125-11732` vs `7125:11732`).
 - Introduced centralized cache lookup/validation in `scripts/cache-lookup.ts` with deterministic cache-root resolution (explicit arg -> env -> default), canonical key construction, index-first checks, and canonical directory fallback checks.
 - Updated module validation output to report exact missing artifact scope and details (top-level vs nested, node id, cache root), and added `--debug-cache` for lookup diagnostics.

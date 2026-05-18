@@ -162,7 +162,7 @@ Supported tools for cache actions:
 - `get_metadata`
 - `get_figjam`
 
-Module URLs prefixed with `@` in `.cursor/mcp/figma-links.yaml` are managed source nodes. `cache warm` processes those module source nodes, writes source-node artifacts, and creates module manifests with discovered child-node metadata. Child nodes are descendants inside the source node; users do not need to list them in the config.
+Module URLs prefixed with `@` in `.cursor/mcp/figma-links.yaml` are managed source nodes. `cache warm` processes those module source nodes, writes source-node artifacts, discovers child nodes from source design context, and warms child-node artifacts automatically. Child nodes are descendants inside the source node; users do not need to list them in the config.
 
 Use `cache inspect` to see module manifest and artifact readiness:
 
@@ -171,7 +171,7 @@ npx figma-mcp cache inspect header-text
 npx figma-mcp cache inspect header-text --json
 ```
 
-The JSON output is the stable agent-facing view. It includes the source node, discovered child nodes, fetched/missing artifact status, shared variable artifact paths, raw payload paths, and lazy-fetch guidance. Missing child-node detail should be fetched through the cache, for example:
+The JSON output is the stable agent-facing view. It includes the source node, discovered child nodes, fetched/missing artifact status, shared variable artifact paths, raw payload paths, and lazy-fetch guidance. Sparse source-node design-context responses now auto-warm direct child design contexts during `cache warm`; if any child-node artifact is still missing, fetch it through the cache, for example:
 
 ```bash
 npx figma-mcp cache get --url "<figma-url>" --node <child-node-id> --tool get_design_context

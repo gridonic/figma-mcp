@@ -359,15 +359,188 @@ function readArtifact(entry: CacheIndexEntry): unknown {
   return null;
 }
 
-function buildModuleManifest(target: FigmaTarget, designContext: unknown): ModuleManifest {
-  return createModuleManifest({
-    moduleName: target.name,
-    fileKey: target.fileKey,
-    sourceUrl: target.url,
-    sourceNodeId: target.nodeId,
-    designContext,
-    cacheRoot: CACHE_ROOT,
-  });
+function toRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function readTextPayload(value: unknown): unknown {
+  const record = toRecord(value);
+  const content = Array.isArray(record?.content) ? record.content : [];
+  const textParts = content
+    .map((item) => {
+      const itemRecord = toRecord(item);
+      return typeof itemRecord?.text === 'string' ? itemRecord.text : null;
+    })
+    .filter((text): text is string => Boolean(text));
+
+  for (const text of textParts) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      // Keep looking; some MCP text content is plain prose/markdown.
+    }
+  }
+
+  return value;
+}
+
+function readNodeId(value: unknown): string | null {
+  const record = toRecord(value);
+  if (!record) return null;
+  const candidate = [record.id, record.nodeId, record.node_id].find((entry) => typeof entry === 'string');
+  if (typeof candidate !== 'string') return null;
+  const normalized = normalizeNodeId(candidate.trim());
+  return /^\d+:\d+$/.test(normalized) ? normalized : null;
+}
+
+function collectTextFragments(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectTextFragments(item, out);
+    return;
+  }
+  const record = toRecord(value);
+  if (!record) return;
+  for (const child of Object.values(record)) {
+    collectTextFragments(child, out);
+  }
+}
+
+function extractNodeIdsFromText(text: string): string[] {
+  const ids = new Set<string>();
+  const matches = text.matchAll(/\b(\d+[-:]\d+)\b/g);
+  for (const match of matches) {
+    const normalized = normalizeNodeId(match[1]);
+    if (/^\d+:\d+$/.test(normalized)) ids.add(normalized);
+  }
+  return [...ids];
+}
+
+export interface SparseDesignContextAnalysis {
+  isSparse: boolean;
+  reasons: string[];
+  directChildNodeIds: string[];
+}
+
+export function analyzeSparseDesignContext(payload: unknown, sourceNodeId: string): SparseDesignContextAnalysis {
+  const root = readTextPayload(payload);
+  const source = normalizeNodeId(sourceNodeId);
+  const reasons = new Set<string>();
+  const directChildren = new Map<string, Record<string, unknown>>();
+  const textFragments: string[] = [];
+  collectTextFragments(payload, textFragments);
+
+  const visit = (value: unknown): void => {
+    const record = toRecord(value);
+    if (!record) {
+      if (Array.isArray(value)) value.forEach(visit);
+      return;
+    }
+
+    const recordNodeId = readNodeId(record);
+    const children = Array.isArray(record.children) ? record.children : [];
+    if (recordNodeId === source && children.length > 0) {
+      for (const child of children) {
+        const childRecord = toRecord(child);
+        const childId = readNodeId(childRecord);
+        if (childId && childId !== source) {
+          directChildren.set(childId, childRecord ?? { id: childId });
+        }
+      }
+    }
+
+    for (const child of Object.values(record)) {
+      if (Array.isArray(child)) child.forEach(visit);
+      else if (child && typeof child === 'object') visit(child);
+    }
+  };
+  visit(root);
+
+  const hintRegexes = [
+    /get_design_context/i,
+    /(must|should|need|required|call).{0,40}(individual|individually|sublayer|sub-layer|child|children|node)/i,
+  ];
+  const combinedText = textFragments.join('\n');
+  if (hintRegexes.every((rx) => rx.test(combinedText))) {
+    reasons.add('instruction-text-hint');
+  }
+
+  const childEntries = [...directChildren.entries()];
+  if (childEntries.length > 0) {
+    const richKeys = new Set([
+      'fills',
+      'strokes',
+      'characters',
+      'layoutMode',
+      'absoluteBoundingBox',
+      'style',
+      'componentProperties',
+      'constraints',
+      'effects',
+    ]);
+    const structurallySparse = childEntries.every(([, child]) => {
+      const keys = Object.keys(child);
+      const hasRichKey = keys.some((key) => richKeys.has(key));
+      const hasNestedChildren = Array.isArray(child.children) && child.children.length > 0;
+      return !hasRichKey && !hasNestedChildren && keys.length <= 6;
+    });
+    if (structurallySparse) reasons.add('structural-minimal-children');
+  }
+
+  const fallbackIds = reasons.has('instruction-text-hint') ? extractNodeIdsFromText(combinedText) : [];
+  const directChildNodeIds = new Set<string>([...directChildren.keys(), ...fallbackIds]);
+  directChildNodeIds.delete(source);
+
+  return {
+    isSparse: reasons.size > 0,
+    reasons: [...reasons],
+    directChildNodeIds: [...directChildNodeIds].sort((a, b) => a.localeCompare(b)),
+  };
+}
+
+export interface SparseChildWarmResult {
+  sparseDetected: boolean;
+  sparseReasons: string[];
+  childNodeIds: string[];
+  autoFetchedChildNodeIds: string[];
+  missingChildNodeIds: string[];
+  warnings: string[];
+}
+
+export async function warmSparseChildDesignContexts(params: {
+  analysis: SparseDesignContextAnalysis;
+  cacheRoot: string;
+  moduleName: string;
+  fileKey: string;
+  fetchDesignContext: (nodeId: string) => Promise<{ fromCache: boolean }>;
+}): Promise<SparseChildWarmResult> {
+  const result: SparseChildWarmResult = {
+    sparseDetected: params.analysis.isSparse,
+    sparseReasons: params.analysis.reasons,
+    childNodeIds: [...params.analysis.directChildNodeIds],
+    autoFetchedChildNodeIds: [],
+    missingChildNodeIds: [],
+    warnings: [],
+  };
+  if (!params.analysis.isSparse || params.analysis.directChildNodeIds.length === 0) return result;
+
+  for (const childNodeId of params.analysis.directChildNodeIds) {
+    const status = getArtifactStatus(params.cacheRoot, params.moduleName, params.fileKey, childNodeId, 'get_design_context');
+    if (status.ready) continue;
+    try {
+      await params.fetchDesignContext(childNodeId);
+      result.autoFetchedChildNodeIds.push(childNodeId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      result.missingChildNodeIds.push(childNodeId);
+      result.warnings.push(`child ${childNodeId}: ${message}`);
+    }
+  }
+
+  return result;
 }
 
 function renderManifestSummary(manifest: ModuleManifest): void {
@@ -375,6 +548,20 @@ function renderManifestSummary(manifest: ModuleManifest): void {
   console.log(`${c.bold(manifest.moduleName)} ${status}`);
   console.log(`${c.dim('Source')} ${manifest.sourceNodeId} ${c.dim(manifest.fileKey)}`);
   console.log(`${c.dim('Children')} ${manifest.childNodes.length}`);
+  if (manifest.sparseDetection?.detected) {
+    console.log(`${c.dim('Sparse')} ${manifest.sparseDetection.reasons.join(', ') || 'detected'}`);
+  }
+  if ((manifest.autoFetchedChildNodes?.length ?? 0) > 0) {
+    console.log(`${c.dim('Auto-fetched children')} ${manifest.autoFetchedChildNodes.join(', ')}`);
+  }
+  if ((manifest.missingChildNodes?.length ?? 0) > 0) {
+    console.log(`${c.yellow('Missing children')} ${manifest.missingChildNodes.join(', ')}`);
+  }
+  if ((manifest.incompleteReasons?.length ?? 0) > 0) {
+    for (const reason of manifest.incompleteReasons) {
+      console.log(`${c.yellow('incomplete')} ${reason}`);
+    }
+  }
   if (manifest.sharedVariableArtifact) {
     console.log(`${c.dim('Variables')} ${manifest.sharedVariableArtifact.paths.join(', ')}`);
   }
@@ -719,7 +906,51 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
         }
       }
       if (target.kind === 'module' && designContext) {
-        const manifest = buildModuleManifest(target, designContext);
+        const sparse = analyzeSparseDesignContext(designContext, target.nodeId);
+        if (sparse.isSparse && sparse.directChildNodeIds.length > 0) {
+          console.log(`  ${c.dim('sparse source')} ${target.name} ${c.dim(sparse.reasons.join(', '))}`);
+          console.log(`  ${c.dim('child warm')} ${sparse.directChildNodeIds.length} direct nodes ${c.dim('(get_design_context)')}`);
+        }
+        const sparseWarm = await warmSparseChildDesignContexts({
+          analysis: sparse,
+          cacheRoot: CACHE_ROOT,
+          moduleName: target.name,
+          fileKey: target.fileKey,
+          fetchDesignContext: async (childNodeId) =>
+            getCachedOrFetch({
+              toolName: 'get_design_context',
+              sourceUrl: target.url,
+              nodeId: childNodeId,
+              refresh: false,
+              allowFetchOnMiss: true,
+              configPath,
+              client,
+              name: target.name,
+            }),
+        });
+        for (const childNodeId of sparseWarm.autoFetchedChildNodeIds) {
+          console.log(`  - ${target.name} ${c.dim('child')} ${c.dim(childNodeId)} get_design_context ${c.dim('fresh')}`);
+        }
+        for (const missing of sparseWarm.missingChildNodeIds) {
+          console.log(c.yellow(`  - ${target.name} child ${missing} get_design_context failed`));
+        }
+        for (const warning of sparseWarm.warnings) {
+          console.log(`  ${c.yellow('warning')} ${warning}`);
+        }
+
+        const manifest = createModuleManifest({
+          moduleName: target.name,
+          fileKey: target.fileKey,
+          sourceUrl: target.url,
+          sourceNodeId: target.nodeId,
+          designContext,
+          cacheRoot: CACHE_ROOT,
+          sparseChildNodeHints: sparseWarm.childNodeIds,
+          autoFetchedChildNodes: sparseWarm.autoFetchedChildNodeIds,
+          missingChildNodes: sparseWarm.missingChildNodeIds,
+          sparseDetectionReasons: sparseWarm.sparseReasons,
+        });
+
         const manifestPath = saveModuleManifest(CACHE_ROOT, manifest);
         console.log(
           `  ${c.green('manifest')} ${target.name} ${manifest.complete ? c.dim('complete') : c.yellow('partial')} ${c.dim(manifestPath)}`
