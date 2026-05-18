@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs';
+import { basename, join, relative } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
@@ -119,10 +119,151 @@ export interface GetCachedOrFetchOptions {
 
 const c = {
   dim: (s: string) => `\x1b[2m${s}\x1b[0m`,
+  bold: (s: string) => `\x1b[1m${s}\x1b[0m`,
   cyan: (s: string) => `\x1b[36m${s}\x1b[0m`,
   green: (s: string) => `\x1b[32m${s}\x1b[0m`,
   yellow: (s: string) => `\x1b[33m${s}\x1b[0m`,
 };
+
+const TOOL_LABELS: Record<ToolName, string> = {
+  get_screenshot: 'screenshot',
+  get_variable_defs: 'variables',
+  get_design_context: 'design context',
+  get_metadata: 'metadata',
+  get_figjam: 'figjam',
+};
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAge(iso: string, now = Date.now()): string {
+  const ms = now - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return iso;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 14) return `${days}d ago`;
+  return iso.slice(0, 10);
+}
+
+function artifactSize(path: string | undefined): number {
+  if (!path || !existsSync(path)) return 0;
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+function artifactDirLabel(artifactDir: string, key: string): string | null {
+  const base = basename(artifactDir);
+  if (base === key) return null;
+  const prefix = base.split('__')[0];
+  const fileKey = key.split('__')[0];
+  return prefix && prefix !== fileKey ? prefix : null;
+}
+
+function formatCacheRootPath(): string {
+  const rel = relative(ROOT, CACHE_ROOT);
+  return rel && !rel.startsWith('..') ? rel : CACHE_ROOT;
+}
+
+function renderArtifactStatus(entry: CacheIndexEntry): { payload: string; image: string; bytes: number } {
+  const payloadOk = Boolean(entry.payloadPath && existsSync(entry.payloadPath));
+  const imageOk = Boolean(entry.imagePath && existsSync(entry.imagePath));
+  const payload = payloadOk ? c.green('json ✓') : c.dim('json ·');
+  const image = imageOk ? c.green('img ✓') : c.dim('img ·');
+  const bytes = artifactSize(entry.payloadPath) + artifactSize(entry.imagePath);
+  return { payload, image, bytes };
+}
+
+function renderCacheList(entries: CacheIndexEntry[]): void {
+  const byFile = new Map<string, Map<string, CacheIndexEntry[]>>();
+  const toolCounts = new Map<ToolName, number>();
+  let totalBytes = 0;
+
+  for (const entry of entries) {
+    const nodeMap = byFile.get(entry.fileKey) ?? new Map<string, CacheIndexEntry[]>();
+    const nodeEntries = nodeMap.get(entry.nodeId) ?? [];
+    nodeEntries.push(entry);
+    nodeMap.set(entry.nodeId, nodeEntries);
+    byFile.set(entry.fileKey, nodeMap);
+    toolCounts.set(entry.toolName, (toolCounts.get(entry.toolName) ?? 0) + 1);
+    totalBytes += artifactSize(entry.payloadPath) + artifactSize(entry.imagePath);
+  }
+
+  const fileKeys = [...byFile.keys()].sort();
+  const nodeCount = [...byFile.values()].reduce((sum, nodeMap) => sum + nodeMap.size, 0);
+  const toolSummary = [...toolCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([tool, count]) => `${TOOL_LABELS[tool]} ${count}`)
+    .join(c.dim(' · '));
+
+  console.log(c.bold('Figma MCP cache'));
+  console.log(`${c.dim('Root')} ${formatCacheRootPath()}`);
+  console.log(
+    `${c.cyan(String(entries.length))} ${entries.length === 1 ? 'entry' : 'entries'}` +
+    c.dim(' · ') +
+    `${formatBytes(totalBytes)}` +
+    c.dim(' · ') +
+    `${fileKeys.length} ${fileKeys.length === 1 ? 'file' : 'files'}` +
+    c.dim(' · ') +
+    `${nodeCount} ${nodeCount === 1 ? 'node' : 'nodes'}`
+  );
+  if (toolSummary) {
+    console.log(`${c.dim('Tools')} ${toolSummary}`);
+  }
+  console.log('');
+
+  for (const [fileIndex, fileKey] of fileKeys.entries()) {
+    const nodeMap = byFile.get(fileKey)!;
+    const nodeIds = [...nodeMap.keys()].sort();
+    const fileEntryCount = nodeIds.reduce((sum, nodeId) => sum + (nodeMap.get(nodeId)?.length ?? 0), 0);
+    const filePrefix = fileIndex === fileKeys.length - 1 ? '└' : '├';
+    console.log(`${filePrefix}─ ${c.bold('file')} ${fileKey} ${c.dim(`(${fileEntryCount})`)}`);
+
+    for (const [nodeIndex, nodeId] of nodeIds.entries()) {
+      const nodeEntries = [...(nodeMap.get(nodeId) ?? [])].sort((a, b) => a.toolName.localeCompare(b.toolName));
+      const latest = nodeEntries.reduce(
+        (max, entry) => (entry.updatedAt > max ? entry.updatedAt : max),
+        nodeEntries[0]?.updatedAt ?? ''
+      );
+      const label = nodeEntries.map((entry) => artifactDirLabel(entry.artifactDir, entry.key)).find(Boolean);
+      const nodePrefix = fileIndex === fileKeys.length - 1 ? ' ' : '│';
+      const nodeBranch = nodeIndex === nodeIds.length - 1 ? '└' : '├';
+      const nodeMeta = [
+        c.bold(nodeId),
+        label ? c.cyan(label) : null,
+        latest ? c.dim(`updated ${formatAge(latest)}`) : null,
+      ]
+        .filter(Boolean)
+        .join(c.dim(' · '));
+      console.log(`${nodePrefix} ${nodeBranch}─ ${nodeMeta}`);
+
+      for (const [toolIndex, entry] of nodeEntries.entries()) {
+        const status = renderArtifactStatus(entry);
+        const toolPrefix = nodeIndex === nodeIds.length - 1 ? ' ' : '│';
+        const toolBranch = toolIndex === nodeEntries.length - 1 ? '└' : '├';
+        const toolLine =
+          `${TOOL_LABELS[entry.toolName].padEnd(15)} ` +
+          `${status.image}  ${status.payload}  ` +
+          `${c.dim(formatAge(entry.updatedAt))}  ` +
+          `${c.dim(formatBytes(status.bytes))}`;
+        console.log(`${toolPrefix}   ${toolBranch}─ ${toolLine}`);
+      }
+    }
+
+    if (fileIndex < fileKeys.length - 1) {
+      console.log('');
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Cache index helpers
@@ -444,13 +585,10 @@ async function cmdList(): Promise<void> {
   const entries = Object.values(index.entries);
   if (entries.length === 0) {
     console.log(c.yellow('Cache is empty.'));
+    console.log(c.dim(`Root: ${formatCacheRootPath()}`));
     return;
   }
-  console.log(c.cyan(`Cached entries: ${entries.length}`));
-  for (const e of entries) {
-    const hasImage = e.imagePath ? 'image' : 'no-image';
-    console.log(`- ${e.toolName} ${c.dim(e.nodeId)} ${c.dim(e.updatedAt)} ${c.dim(hasImage)} ${c.dim(e.key)}`);
-  }
+  renderCacheList(entries);
 }
 
 async function cmdClear(): Promise<void> {
