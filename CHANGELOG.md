@@ -1,3 +1,9 @@
+## [1.0.4](https://github.com/gridonic/figma-mcp/compare/v1.0.3...v1.0.4)
+
+- Improved cache functionality
+- Updated rules workflow
+- Changed cache list output style
+
 ## [1.0.3](https://github.com/gridonic/figma-mcp/compare/v1.0.2...v1.0.3)
 
 - added create module skill
