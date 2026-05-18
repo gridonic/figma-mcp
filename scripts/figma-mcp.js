@@ -316,6 +316,7 @@ function cmdHelp() {
   console.log('  cache clear                Delete entire local cache');
   console.log('  cache warm                 Pre-populate cache from figma-links.yaml');
   console.log('  cache refresh              Force-refresh cache from Figma MCP');
+  console.log('  cache inspect [module]     Inspect module manifests and artifact readiness');
   console.log('  cache get --url --node     Fetch and cache a single artifact');
   console.log('  tokens:sync                Sync color + typography tokens to SCSS files');
   console.log('  modules:setup              Run full setup pipeline (supports --debug-cache, --cache-root)');

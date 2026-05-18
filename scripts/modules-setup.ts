@@ -4,7 +4,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname, join } from 'path';
 import { execSync } from 'child_process';
 import { getCachedOrFetch } from './figma-cache.js';
-import { extractFileKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot, validateModuleCache } from './cache-lookup.js';
+import {
+  createModuleManifest,
+  extractFileKey,
+  loadModuleManifest,
+  normalizeNodeId,
+  parseFigmaNodeIds,
+  resolveCacheRoot,
+  saveModuleManifest,
+  validateSourceNodeCache,
+} from './cache-lookup.js';
 import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
@@ -116,57 +125,84 @@ async function ensureRequiredCache(
   const topNodeId = normalizeNodeId(moduleTarget.nodeId);
   if (options.warmCache) {
     const missing: string[] = [];
-    const { nestedNodeIds } = parseFigmaNodeIds(moduleTarget.figmaUrl);
-    const nodes = [topNodeId, ...nestedNodeIds.map(normalizeNodeId).filter((id) => id !== topNodeId)];
     if (options.debugCache) {
       console.log(`[cache-debug] cacheRoot=${options.cacheRoot}`);
-      console.log(`[cache-debug] topLevelNodeId=${topNodeId}`);
-      console.log(`[cache-debug] nestedNodeIds=${nodes.slice(1).join(',') || '(none)'}`);
+      console.log(`[cache-debug] sourceNodeId=${topNodeId}`);
     }
-    for (const nodeId of nodes) {
-      for (const tool of REQUIRED_TOOLS) {
-        if (options.debugCache) {
-          console.log(`[cache-debug] warm-fetch ${tool} node=${nodeId}`);
+    let designContext: unknown | null = null;
+    for (const tool of REQUIRED_TOOLS) {
+      if (options.debugCache) {
+        console.log(`[cache-debug] warm-fetch ${tool} sourceNode=${topNodeId}`);
+      }
+      try {
+        const result = await getCachedOrFetch({
+          toolName: tool,
+          sourceUrl: moduleTarget.figmaUrl,
+          nodeId: topNodeId,
+          allowFetchOnMiss: true,
+          name: moduleTarget.moduleName,
+        });
+        if (tool === 'get_design_context') {
+          designContext = result.data;
         }
-        try {
-          await getCachedOrFetch({
-            toolName: tool,
-            sourceUrl: moduleTarget.figmaUrl,
-            nodeId,
-            allowFetchOnMiss: true,
-            name: moduleTarget.moduleName,
-          });
-        } catch {
-          const prefix = nodeId === topNodeId ? '' : '[nested] ';
-          missing.push(`${prefix}missing required artifact: ${tool} for node ${nodeId} (cacheRoot=${options.cacheRoot})`);
+      } catch {
+        missing.push(`missing required source-node artifact: ${tool} for node ${topNodeId} (cacheRoot=${options.cacheRoot})`);
+      }
+    }
+    if (designContext) {
+      const manifest = createModuleManifest({
+        cacheRoot: options.cacheRoot,
+        moduleName: moduleTarget.moduleName,
+        fileKey: moduleTarget.fileKey,
+        sourceUrl: moduleTarget.figmaUrl,
+        sourceNodeId: topNodeId,
+        designContext,
+      });
+      saveModuleManifest(options.cacheRoot, manifest);
+      if (options.debugCache && !manifest.complete) {
+        for (const warning of manifest.warnings) {
+          console.log(`[cache-debug] manifest warning: ${warning}`);
         }
       }
     }
     return missing;
   }
 
-  const result = validateModuleCache({
+  const result = validateSourceNodeCache({
     cacheRoot: options.cacheRoot,
     moduleName: moduleTarget.moduleName,
-    figmaUrl: moduleTarget.figmaUrl,
     fileKey: moduleTarget.fileKey,
-    topLevelNodeId: topNodeId,
+    sourceNodeId: topNodeId,
     requiredTools: REQUIRED_TOOLS,
     debug: options.debugCache,
   });
+  const manifest = loadModuleManifest(options.cacheRoot, moduleTarget.moduleName, moduleTarget.fileKey, topNodeId);
   if (options.debugCache) {
     for (const line of result.debug) {
       console.log(`[cache-debug] ${line}`);
     }
+    if (!manifest) {
+      console.log(`[cache-debug] manifest missing for module=${moduleTarget.moduleName} sourceNode=${topNodeId}`);
+    } else if (!manifest.complete) {
+      for (const warning of manifest.warnings) {
+        console.log(`[cache-debug] manifest warning: ${warning}`);
+      }
+    }
   }
-  return result.failures.map((failure) => {
+  const failures = result.failures.map((failure) => {
     const details = [
       failure.message,
       `checked=${failure.checkedPaths.join(',') || '(none)'}`,
       `missing=${failure.missingFiles.join(',') || '(none)'}`,
     ].join(' | ');
-    return failure.scope === 'nested' ? `[nested] ${details}` : details;
+    return details;
   });
+  if (!manifest) {
+    failures.push(
+      `missing module manifest for source node ${topNodeId} (module=${moduleTarget.moduleName}, cacheRoot=${options.cacheRoot})`
+    );
+  }
+  return failures;
 }
 
 async function main(): Promise<void> {

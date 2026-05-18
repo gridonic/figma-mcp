@@ -3,7 +3,16 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { buildCacheKey, normalizeNodeId, resolveCacheRoot, validateModuleCache } from './cache-lookup.js';
+import {
+  buildCacheKey,
+  createModuleManifest,
+  loadModuleManifest,
+  normalizeNodeId,
+  resolveCacheRoot,
+  saveModuleManifest,
+  validateModuleCache,
+  validateSourceNodeCache,
+} from './cache-lookup.js';
 
 function makeCacheRoot(): string {
   return mkdtempSync(join(tmpdir(), 'figma-mcp-cache-test-'));
@@ -49,6 +58,14 @@ test('resolveCacheRoot precedence explicit > env > default', () => {
   assert.equal(resolved, '/repo/.cursor/tmp/figma-mcp-cache');
 });
 
+test('variable definitions are keyed as a shared file artifact', () => {
+  const fileKey = 'abc123';
+  const first = buildCacheKey('get_variable_defs', fileKey, '7125:11732', {});
+  const second = buildCacheKey('get_variable_defs', fileKey, '7125:11823', {});
+  assert.equal(first, second);
+  assert.match(first, /__variables__get_variable_defs__/);
+});
+
 test('validateModuleCache finds top-level artifacts with canonical keys', () => {
   const cacheRoot = makeCacheRoot();
   try {
@@ -68,6 +85,93 @@ test('validateModuleCache finds top-level artifacts with canonical keys', () => 
       requiredTools: ['get_screenshot', 'get_design_context', 'get_variable_defs'],
     });
     assert.equal(result.failures.length, 0);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('validateSourceNodeCache ignores explicit nested node hints as readiness requirements', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const moduleName = 'header-hero';
+    const fileKey = 'abc123';
+    const sourceNode = '7125:11576';
+    for (const tool of ['get_screenshot', 'get_design_context', 'get_variable_defs'] as const) {
+      const key = buildCacheKey(tool, fileKey, sourceNode, {});
+      writeArtifact(cacheRoot, key, tool === 'get_screenshot' ? 'image' : 'payload', `${moduleName}__${key}`);
+    }
+
+    const result = validateSourceNodeCache({
+      cacheRoot,
+      moduleName,
+      fileKey,
+      sourceNodeId: sourceNode,
+      requiredTools: ['get_screenshot', 'get_design_context', 'get_variable_defs'],
+    });
+    assert.equal(result.failures.length, 0);
+    assert.deepEqual(result.nestedNodeIds, []);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('module manifest records discovered child nodes and explicit hints', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const fileKey = 'abc123';
+    const moduleName = 'header-hero';
+    const sourceNode = '7125:11576';
+    const designKey = buildCacheKey('get_design_context', fileKey, sourceNode, {});
+    const screenshotKey = buildCacheKey('get_screenshot', fileKey, sourceNode, {});
+    const variableKey = buildCacheKey('get_variable_defs', fileKey, sourceNode, {});
+    writeArtifact(cacheRoot, designKey, 'payload', `${moduleName}__${designKey}`);
+    writeArtifact(cacheRoot, screenshotKey, 'image', `${moduleName}__${screenshotKey}`);
+    writeArtifact(cacheRoot, variableKey, 'payload', `${moduleName}__${variableKey}`);
+
+    const manifest = createModuleManifest({
+      cacheRoot,
+      moduleName,
+      fileKey,
+      sourceUrl: `https://www.figma.com/design/${fileKey}/test?node-id=7125-11576&starting-point-node-id=7125-11999`,
+      sourceNodeId: sourceNode,
+      designContext: {
+        id: sourceNode,
+        name: 'Header Hero',
+        children: [{ id: '7125:11732', name: 'Headline', type: 'TEXT' }],
+      },
+      updatedAt: '2026-05-18T00:00:00.000Z',
+    });
+    const manifestPath = saveModuleManifest(cacheRoot, manifest);
+    const loaded = loadModuleManifest(cacheRoot, moduleName, fileKey, sourceNode);
+
+    assert.equal(manifestPath.endsWith(`${moduleName}__${fileKey}__7125-11576.json`), true);
+    assert.equal(loaded?.complete, true);
+    assert.deepEqual(
+      loaded?.childNodes.map((node) => [node.nodeId, node.source]),
+      [
+        ['7125:11732', 'discovered'],
+        ['7125:11999', 'hint'],
+      ]
+    );
+    assert.equal(loaded?.sharedVariableArtifact?.key, variableKey);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('module manifest marks undiscoverable payloads as partial', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const manifest = createModuleManifest({
+      cacheRoot,
+      moduleName: 'header-text',
+      fileKey: 'abc123',
+      sourceUrl: 'https://www.figma.com/design/abc123/test?node-id=7125-11823',
+      sourceNodeId: '7125:11823',
+      designContext: { content: [{ type: 'text', text: 'plain text without node ids' }] },
+    });
+    assert.equal(manifest.complete, false);
+    assert.equal(manifest.warnings.length > 0, true);
   } finally {
     rmSync(cacheRoot, { recursive: true, force: true });
   }
@@ -109,8 +213,9 @@ test('validateModuleCache reports nested missing without top-level miss', () => 
     });
 
     assert.equal(result.failures.some((f) => f.scope === 'top-level'), false);
-    assert.equal(result.failures.length, 3);
+    assert.equal(result.failures.length, 2);
     assert.equal(result.failures.every((f) => f.scope === 'nested'), true);
+    assert.equal(result.failures.some((f) => f.toolName === 'get_variable_defs'), false);
   } finally {
     rmSync(cacheRoot, { recursive: true, force: true });
   }

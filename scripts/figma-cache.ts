@@ -5,7 +5,19 @@ import { basename, join, relative } from 'path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
-import { buildCacheKey, extractFileKey, normalizeNodeId, parseFigmaNodeIds, resolveCacheRoot } from './cache-lookup.js';
+import {
+  buildCacheKey,
+  buildManifestPath,
+  createModuleManifest,
+  extractFileKey,
+  getArtifactStatus,
+  loadModuleManifest,
+  ModuleManifest,
+  normalizeNodeId,
+  parseFigmaNodeIds,
+  resolveCacheRoot,
+  saveModuleManifest,
+} from './cache-lookup.js';
 import { loadFigmaLinksConfig, resolveConfigPath, stripAtPrefix } from './config-loader.js';
 
 // Project root = wherever the CLI is invoked from (the consuming project)
@@ -99,6 +111,8 @@ interface FigmaTarget {
   url: string;
   fileKey: string;
   nodeId: string;
+  kind: 'module' | 'styleguide';
+  managed: boolean;
 }
 
 export interface GetCachedOrFetchOptions {
@@ -308,17 +322,24 @@ function loadTargetsFromConfig(configPath: string): FigmaTarget[] {
   const config = loadFigmaLinksConfig(configPath);
   const targets: FigmaTarget[] = [];
 
-  const allEntries: Array<[string, string]> = [
-    ...Object.entries(config.styleguide ?? {}),
-    ...Object.entries(config.modules ?? {}),
-  ];
-
-  for (const [name, rawUrl] of allEntries) {
+  for (const [name, rawUrl] of Object.entries(config.styleguide ?? {})) {
     if (!rawUrl || !rawUrl.includes('figma.com/design/')) continue;
+    const managed = rawUrl.startsWith('@');
     const url = stripAtPrefix(rawUrl);
     try {
       const parsed = parseFigmaUrl(url);
-      targets.push({ name, url, fileKey: parsed.fileKey, nodeId: parsed.nodeId });
+      targets.push({ name, url, fileKey: parsed.fileKey, nodeId: parsed.nodeId, kind: 'styleguide', managed });
+    } catch {
+      // skip entries with unparseable URLs
+    }
+  }
+
+  for (const [name, rawUrl] of Object.entries(config.modules ?? {})) {
+    if (!rawUrl || !rawUrl.startsWith('@') || !rawUrl.includes('figma.com/design/')) continue;
+    const url = stripAtPrefix(rawUrl);
+    try {
+      const parsed = parseFigmaUrl(url);
+      targets.push({ name, url, fileKey: parsed.fileKey, nodeId: parsed.nodeId, kind: 'module', managed: true });
     } catch {
       // skip entries with unparseable URLs
     }
@@ -335,6 +356,30 @@ function readArtifact(entry: CacheIndexEntry): unknown {
     return { imagePath: entry.imagePath };
   }
   return null;
+}
+
+function buildModuleManifest(target: FigmaTarget, designContext: unknown): ModuleManifest {
+  return createModuleManifest({
+    moduleName: target.name,
+    fileKey: target.fileKey,
+    sourceUrl: target.url,
+    sourceNodeId: target.nodeId,
+    designContext,
+    cacheRoot: CACHE_ROOT,
+  });
+}
+
+function renderManifestSummary(manifest: ModuleManifest): void {
+  const status = manifest.complete ? c.green('complete') : c.yellow('partial');
+  console.log(`${c.bold(manifest.moduleName)} ${status}`);
+  console.log(`${c.dim('Source')} ${manifest.sourceNodeId} ${c.dim(manifest.fileKey)}`);
+  console.log(`${c.dim('Children')} ${manifest.childNodes.length}`);
+  if (manifest.sharedVariableArtifact) {
+    console.log(`${c.dim('Variables')} ${manifest.sharedVariableArtifact.paths.join(', ')}`);
+  }
+  for (const warning of manifest.warnings) {
+    console.log(`${c.yellow('warning')} ${warning}`);
+  }
 }
 
 function extractBase64Image(content: unknown[]): string | null {
@@ -625,9 +670,8 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
   const refresh = parsed.refresh === true;
   const nodeFilter = typeof parsed.node === 'string' ? toCanonicalNodeId(parsed.node) : null;
   const toolFilter = parsed.tool ? readToolName(parsed.tool) : null;
-  const tools: ToolName[] = toolFilter
-    ? [toolFilter]
-    : ['get_screenshot', 'get_variable_defs', 'get_design_context', 'get_metadata'];
+  const defaultModuleTools: ToolName[] = ['get_screenshot', 'get_variable_defs', 'get_design_context', 'get_metadata'];
+  const defaultStyleguideTools: ToolName[] = ['get_variable_defs'];
 
   const source = resolveMcpSource();
   console.log(c.dim(`MCP source: ${source}`));
@@ -642,6 +686,8 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
 
   const runWarm = async (client?: Client) => {
     for (const target of targets) {
+      const tools = toolFilter ? [toolFilter] : target.kind === 'styleguide' ? defaultStyleguideTools : defaultModuleTools;
+      let designContext: unknown | null = null;
       for (const toolName of tools) {
         try {
           const res = await getCachedOrFetch({
@@ -654,11 +700,25 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
             client,
             name: target.name,
           });
+          if (toolName === 'get_design_context') {
+            designContext = res.data;
+          }
           const state = res.fromCache ? 'cache' : 'fresh';
-          console.log(`- ${target.name} ${c.dim(target.nodeId)} ${toolName} ${c.dim(state)}`);
+          const label = target.kind === 'module' ? 'source' : 'styleguide';
+          console.log(`- ${target.name} ${c.dim(label)} ${c.dim(target.nodeId)} ${toolName} ${c.dim(state)}`);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           console.log(c.yellow(`- ${target.name} ${toolName} failed: ${msg}`));
+        }
+      }
+      if (target.kind === 'module' && designContext) {
+        const manifest = buildModuleManifest(target, designContext);
+        const manifestPath = saveModuleManifest(CACHE_ROOT, manifest);
+        console.log(
+          `  ${c.green('manifest')} ${target.name} ${manifest.complete ? c.dim('complete') : c.yellow('partial')} ${c.dim(manifestPath)}`
+        );
+        for (const warning of manifest.warnings) {
+          console.log(`  ${c.yellow('warning')} ${warning}`);
         }
       }
     }
@@ -668,6 +728,74 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
   await withMcpClient((client) => runWarm(client));
 }
 
+function inspectTarget(target: FigmaTarget): Record<string, unknown> {
+  const sourceNodeId = normalizeNodeId(target.nodeId);
+  const manifest =
+    target.kind === 'module' ? loadModuleManifest(CACHE_ROOT, target.name, target.fileKey, sourceNodeId) : null;
+  const sourceArtifacts = {
+    get_screenshot: getArtifactStatus(CACHE_ROOT, target.name, target.fileKey, sourceNodeId, 'get_screenshot'),
+    get_design_context: getArtifactStatus(CACHE_ROOT, target.name, target.fileKey, sourceNodeId, 'get_design_context'),
+    get_variable_defs: getArtifactStatus(CACHE_ROOT, target.name, target.fileKey, sourceNodeId, 'get_variable_defs'),
+  };
+  return {
+    name: target.name,
+    kind: target.kind,
+    fileKey: target.fileKey,
+    sourceUrl: target.url,
+    sourceNodeId,
+    sourceArtifacts,
+    manifest,
+    manifestPath:
+      manifest && target.kind === 'module' ? buildManifestPath(CACHE_ROOT, target.name, target.fileKey, sourceNodeId) : null,
+    lazyFetch: {
+      command: `npx figma-mcp cache get --url "${target.url}" --node <child-node-id> --tool get_design_context`,
+      note: 'Fetch missing child-node detail through cache get; use --refresh only when the Figma source should be refreshed.',
+    },
+  };
+}
+
+async function cmdInspect(parsed: Record<string, string | boolean>, argv: string[]): Promise<void> {
+  const configPath = typeof parsed.config === 'string' ? parsed.config : resolveConfigPath(argv);
+  const skipValues = new Set<string>();
+  for (let i = 0; i < argv.length; i += 1) {
+    if (argv[i].startsWith('--') && argv[i + 1] && !argv[i + 1].startsWith('--')) {
+      skipValues.add(argv[i + 1]);
+    }
+  }
+  const moduleName = argv.find((arg) => !arg.startsWith('--') && !skipValues.has(arg));
+  const asJson = parsed.json === true;
+  const targets = loadTargetsFromConfig(configPath).filter((target) => target.kind === 'module');
+  const selected = moduleName ? targets.filter((target) => target.name === moduleName) : targets;
+
+  if (selected.length === 0) {
+    throw new Error(
+      moduleName
+        ? `No managed module source node named "${moduleName}" found in ${configPath}.`
+        : `No managed module source nodes found in ${configPath}.`
+    );
+  }
+
+  const inspected = selected.map(inspectTarget);
+  if (asJson) {
+    console.log(JSON.stringify(moduleName ? inspected[0] : inspected, null, 2));
+    return;
+  }
+
+  for (const item of inspected) {
+    const manifest = item.manifest as ModuleManifest | null;
+    if (!manifest) {
+      console.log(`${c.bold(String(item.name))} ${c.yellow('missing manifest')}`);
+      console.log(`${c.dim('Source')} ${String(item.sourceNodeId)} ${c.dim(String(item.fileKey))}`);
+      console.log(c.dim(`Run: npx figma-mcp cache warm --node ${String(item.sourceNodeId)}`));
+      console.log('');
+      continue;
+    }
+    renderManifestSummary(manifest);
+    console.log(c.dim((item.lazyFetch as Record<string, string>).command));
+    console.log('');
+  }
+}
+
 async function main(): Promise<void> {
   const [command = 'list', ...rest] = process.argv.slice(2);
   const parsed = parseArgs(rest);
@@ -675,6 +803,7 @@ async function main(): Promise<void> {
   if (command === 'list') return cmdList();
   if (command === 'clear') return cmdClear();
   if (command === 'get') return cmdGet(parsed);
+  if (command === 'inspect') return cmdInspect(parsed, rest);
   if (command === 'warm' || command === 'refresh') {
     if (command === 'refresh') parsed.refresh = true;
     return cmdWarm(parsed, rest);
@@ -683,6 +812,7 @@ async function main(): Promise<void> {
   console.log('Usage:');
   console.log('  npx figma-mcp cache list');
   console.log('  npx figma-mcp cache clear');
+  console.log('  npx figma-mcp cache inspect [module] [--json]');
   console.log('  npx figma-mcp cache get --url <figma-url> --node <nodeId> [--tool get_screenshot] [--refresh]');
   console.log('  npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]');
   console.log('');
