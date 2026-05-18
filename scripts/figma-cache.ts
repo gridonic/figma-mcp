@@ -7,6 +7,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import {
   buildCacheKey,
+  buildLegacyVariableDefsCacheKey,
   buildManifestPath,
   createModuleManifest,
   extractFileKey,
@@ -509,14 +510,20 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
   const nodeId = toCanonicalNodeId(options.nodeId);
   const extraArgs = options.extraArgs ?? {};
   const key = buildCacheKey(options.toolName, fileKey, nodeId, extraArgs);
+  const legacyKey =
+    options.toolName === 'get_variable_defs' ? buildLegacyVariableDefsCacheKey(fileKey, extraArgs) : undefined;
   const argsHash = key.split('__').at(-1) ?? '';
 
   const index = loadIndex();
   const existing = index.entries[key];
+  const legacy = legacyKey ? index.entries[legacyKey] : undefined;
   if (existing && !options.refresh) {
     return { data: readArtifact(existing), fromCache: true, cacheKey: key };
   }
-  if (!existing && !options.refresh && !options.allowFetchOnMiss) {
+  if (legacy && !options.refresh) {
+    return { data: readArtifact(legacy), fromCache: true, cacheKey: legacy.key };
+  }
+  if (!existing && !legacy && !options.refresh && !options.allowFetchOnMiss) {
     throw new Error(
       `Cache miss for ${options.toolName} ${nodeId}. Re-run with refresh mode or set allowFetchOnMiss to fetch from MCP.`
     );
@@ -570,7 +577,7 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
     artifactDir,
     payloadPath,
     imagePath,
-    createdAt: existing?.createdAt ?? now,
+    createdAt: existing?.createdAt ?? legacy?.createdAt ?? now,
     updatedAt: now,
     manualRefreshOnly: true,
   };

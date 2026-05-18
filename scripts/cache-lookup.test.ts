@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   buildCacheKey,
+  buildLegacyVariableDefsCacheKey,
   createModuleManifest,
+  getArtifactStatus,
   loadModuleManifest,
+  lookupArtifact,
   normalizeNodeId,
   resolveCacheRoot,
   saveModuleManifest,
@@ -58,12 +61,149 @@ test('resolveCacheRoot precedence explicit > env > default', () => {
   assert.equal(resolved, '/repo/.cursor/tmp/figma-mcp-cache');
 });
 
-test('variable definitions are keyed as a shared file artifact', () => {
+test('variable definitions include node identity in cache keys', () => {
   const fileKey = 'abc123';
   const first = buildCacheKey('get_variable_defs', fileKey, '7125:11732', {});
   const second = buildCacheKey('get_variable_defs', fileKey, '7125:11823', {});
-  assert.equal(first, second);
-  assert.match(first, /__variables__get_variable_defs__/);
+  assert.notEqual(first, second);
+  assert.match(first, /__7125-11732__get_variable_defs__/);
+  assert.match(second, /__7125-11823__get_variable_defs__/);
+});
+
+test('get_variable_defs index keys remain unique across modules and nodes', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const fileKey = 'abc123';
+    const fixtures = [
+      { moduleName: 'header-hero', nodeId: '7125:11732' },
+      { moduleName: 'header-text', nodeId: '7125:11823' },
+    ] as const;
+
+    const entries: Record<string, unknown> = {};
+    const keys: string[] = [];
+    for (const fixture of fixtures) {
+      const key = buildCacheKey('get_variable_defs', fileKey, fixture.nodeId, {});
+      keys.push(key);
+      const dirName = `${fixture.moduleName}__${key}`;
+      writeArtifact(cacheRoot, key, 'payload', dirName);
+      entries[key] = {
+        key,
+        toolName: 'get_variable_defs',
+        fileKey,
+        nodeId: fixture.nodeId,
+        sourceUrl: 'https://www.figma.com',
+        argsHash: key.split('__').at(-1),
+        artifactDir: join(cacheRoot, 'artifacts', dirName),
+        payloadPath: join(cacheRoot, 'artifacts', dirName, 'payload.json'),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        manualRefreshOnly: true,
+      };
+    }
+    writeIndex(cacheRoot, entries);
+
+    assert.equal(new Set(keys).size, fixtures.length);
+    for (const fixture of fixtures) {
+      const status = getArtifactStatus(cacheRoot, fixture.moduleName, fileKey, fixture.nodeId, 'get_variable_defs');
+      assert.equal(status.ready, true);
+      assert.equal(status.found.length, 1);
+      assert.equal(status.found[0]?.includes(`${fixture.moduleName}__`), true);
+    }
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('lookupArtifact falls back to legacy get_variable_defs key when needed', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const fileKey = 'abc123';
+    const nodeId = '7125:11732';
+    const legacyKey = buildLegacyVariableDefsCacheKey(fileKey, {});
+    const dirName = `header-text__${legacyKey}`;
+    writeArtifact(cacheRoot, legacyKey, 'payload', dirName);
+    writeIndex(cacheRoot, {
+      [legacyKey]: {
+        key: legacyKey,
+        toolName: 'get_variable_defs',
+        fileKey,
+        nodeId,
+        sourceUrl: 'https://www.figma.com',
+        argsHash: legacyKey.split('__').at(-1),
+        artifactDir: join(cacheRoot, 'artifacts', dirName),
+        payloadPath: join(cacheRoot, 'artifacts', dirName, 'payload.json'),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        manualRefreshOnly: true,
+      },
+    });
+
+    const result = lookupArtifact(
+      { version: 1, entries: JSON.parse(readFileSync(join(cacheRoot, 'index.json'), 'utf-8')).entries },
+      cacheRoot,
+      'get_variable_defs',
+      fileKey,
+      nodeId,
+      {}
+    );
+    assert.equal(result.hit, true);
+    assert.equal(result.key, legacyKey);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
+});
+
+test('lookupArtifact prefers new get_variable_defs key over legacy key', () => {
+  const cacheRoot = makeCacheRoot();
+  try {
+    const fileKey = 'abc123';
+    const nodeId = '7125:11732';
+    const newKey = buildCacheKey('get_variable_defs', fileKey, nodeId, {});
+    const legacyKey = buildLegacyVariableDefsCacheKey(fileKey, {});
+    writeArtifact(cacheRoot, newKey, 'payload', `header-text__${newKey}`);
+    writeArtifact(cacheRoot, legacyKey, 'payload', `header-text__${legacyKey}`);
+    writeIndex(cacheRoot, {
+      [legacyKey]: {
+        key: legacyKey,
+        toolName: 'get_variable_defs',
+        fileKey,
+        nodeId,
+        sourceUrl: 'https://www.figma.com',
+        argsHash: legacyKey.split('__').at(-1),
+        artifactDir: join(cacheRoot, 'artifacts', `header-text__${legacyKey}`),
+        payloadPath: join(cacheRoot, 'artifacts', `header-text__${legacyKey}`, 'payload.json'),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        manualRefreshOnly: true,
+      },
+      [newKey]: {
+        key: newKey,
+        toolName: 'get_variable_defs',
+        fileKey,
+        nodeId,
+        sourceUrl: 'https://www.figma.com',
+        argsHash: newKey.split('__').at(-1),
+        artifactDir: join(cacheRoot, 'artifacts', `header-text__${newKey}`),
+        payloadPath: join(cacheRoot, 'artifacts', `header-text__${newKey}`, 'payload.json'),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        manualRefreshOnly: true,
+      },
+    });
+
+    const result = lookupArtifact(
+      { version: 1, entries: JSON.parse(readFileSync(join(cacheRoot, 'index.json'), 'utf-8')).entries },
+      cacheRoot,
+      'get_variable_defs',
+      fileKey,
+      nodeId,
+      {}
+    );
+    assert.equal(result.hit, true);
+    assert.equal(result.key, newKey);
+  } finally {
+    rmSync(cacheRoot, { recursive: true, force: true });
+  }
 });
 
 test('validateModuleCache finds top-level artifacts with canonical keys', () => {
@@ -213,9 +353,9 @@ test('validateModuleCache reports nested missing without top-level miss', () => 
     });
 
     assert.equal(result.failures.some((f) => f.scope === 'top-level'), false);
-    assert.equal(result.failures.length, 2);
+    assert.equal(result.failures.length, 3);
     assert.equal(result.failures.every((f) => f.scope === 'nested'), true);
-    assert.equal(result.failures.some((f) => f.toolName === 'get_variable_defs'), false);
+    assert.equal(result.failures.some((f) => f.toolName === 'get_variable_defs'), true);
   } finally {
     rmSync(cacheRoot, { recursive: true, force: true });
   }

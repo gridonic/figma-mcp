@@ -160,9 +160,14 @@ export function buildCacheKey(
   extraArgs: Record<string, unknown> = {}
 ): string {
   const canonicalNodeId = normalizeNodeId(nodeId);
-  const nodeKey = toolName === 'get_variable_defs' ? 'variables' : canonicalNodeId.replace(':', '-');
   const argsHash = createHash('sha1').update(JSON.stringify(extraArgs)).digest('hex').slice(0, 12);
+  const nodeKey = canonicalNodeId.replace(':', '-');
   return `${fileKey}__${nodeKey}__${toolName}__${argsHash}`;
+}
+
+export function buildLegacyVariableDefsCacheKey(fileKey: string, extraArgs: Record<string, unknown> = {}): string {
+  const argsHash = createHash('sha1').update(JSON.stringify(extraArgs)).digest('hex').slice(0, 12);
+  return `${fileKey}__variables__get_variable_defs__${argsHash}`;
 }
 
 export function buildManifestPath(cacheRoot: string, moduleName: string, fileKey: string, sourceNodeId: string): string {
@@ -193,20 +198,26 @@ export function lookupArtifact(
   extraArgs: Record<string, unknown> = {}
 ): ArtifactLookupResult {
   const key = buildCacheKey(toolName, fileKey, nodeId, extraArgs);
-  const entry = index.entries[key];
-  if (entry) {
+  const legacyKey = toolName === 'get_variable_defs' ? buildLegacyVariableDefsCacheKey(fileKey, extraArgs) : null;
+  const candidateKeys = unique([key, ...(legacyKey ? [legacyKey] : [])]);
+
+  for (const candidateKey of candidateKeys) {
+    const entry = index.entries[candidateKey];
+    if (!entry) continue;
     const payloadExists = entry.payloadPath ? existsSync(entry.payloadPath) : false;
     const imageExists = entry.imagePath ? existsSync(entry.imagePath) : false;
     if (payloadExists || imageExists) {
-      return { key, hit: true, source: 'index' };
+      return { key: candidateKey, hit: true, source: 'index' };
     }
   }
 
-  const artifactDir = join(cacheRoot, 'artifacts', key);
-  const hasCanonicalPayload = existsSync(join(artifactDir, 'payload.json'));
-  const hasCanonicalImage = existsSync(join(artifactDir, 'image.png'));
-  if (hasCanonicalPayload || hasCanonicalImage) {
-    return { key, hit: true, source: 'canonical-fallback' };
+  for (const candidateKey of candidateKeys) {
+    const artifactDir = join(cacheRoot, 'artifacts', candidateKey);
+    const hasCanonicalPayload = existsSync(join(artifactDir, 'payload.json'));
+    const hasCanonicalImage = existsSync(join(artifactDir, 'image.png'));
+    if (hasCanonicalPayload || hasCanonicalImage) {
+      return { key: candidateKey, hit: true, source: 'canonical-fallback' };
+    }
   }
 
   return { key, hit: false, source: 'missing' };
@@ -253,6 +264,10 @@ export function resolveCacheArtifacts(
   // Direct deterministic fallback for canonical key if directory listing misses.
   const canonicalKey = buildCacheKey(toolName, fileKey, nodeId, {});
   candidateDirs.push(join(artifactsRoot, canonicalKey));
+  if (toolName === 'get_variable_defs') {
+    const legacyKey = buildLegacyVariableDefsCacheKey(fileKey, {});
+    candidateDirs.push(join(artifactsRoot, legacyKey));
+  }
 
   const candidates = unique(candidateDirs);
   const found: string[] = [];
