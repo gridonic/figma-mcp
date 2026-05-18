@@ -68,6 +68,34 @@ npx figma-mcp tokens:sync --refresh
 npx figma-mcp modules:setup
 ```
 
+## Module generation workflow
+
+The module-generation agent expects prepared cache, token, and scaffold state. Run the preparation steps explicitly:
+
+```bash
+npm run figma-mcp -- cache warm --refresh
+npm run figma-mcp -- tokens:sync --refresh
+npm run figma-mcp -- modules:setup --no-warm-cache --skip-tokens-sync
+```
+
+After that, invoke the module-generation agent/rule for one module or all managed modules.
+
+Generation agents use:
+
+```bash
+npm run figma-mcp -- cache inspect <module> --json
+```
+
+as their first design-data step. They read source-node artifacts and module manifests from the inspect output, then edit only existing target `.astro` files. They do not warm cache, sync tokens, scaffold files, or fetch missing child-node details.
+
+If required setup or child-node detail is missing, the agent should skip that module with an exact recovery command, such as:
+
+```bash
+npm run figma-mcp -- cache get --url "<figma-url>" --node <child-node-id> --tool get_design_context
+```
+
+All-module runs continue for modules that pass preflight. Partial manifests are warnings: agents may use discovered child nodes and raw payload paths, but must not assume undiscovered child nodes are absent.
+
 ## CLI commands
 
 ```text
