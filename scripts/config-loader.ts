@@ -1,9 +1,10 @@
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { load } from 'js-yaml';
 import { z } from 'zod';
 
 const FigmaLinksSchema = z.object({
+  source: z.enum(['desktop', 'bridge', 'cloud']).optional(),
   bridge: z
     .object({
       fileKey: z.string().optional().default(''),
@@ -34,7 +35,7 @@ export function loadFigmaLinksConfig(configPath: string): FigmaLinksConfig {
   const result = FigmaLinksSchema.safeParse(raw);
   if (!result.success) {
     throw new Error(
-      `Invalid figma-links.yaml at ${configPath}:\n${result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')}`
+      `Invalid config at ${configPath}:\n${result.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n')}`
     );
   }
   return result.data;
@@ -50,5 +51,10 @@ export function resolveConfigPath(argv: string[], env: NodeJS.ProcessEnv = proce
     return argv[idx + 1];
   }
   if (env.FIGMA_MCP_CONFIG?.trim()) return env.FIGMA_MCP_CONFIG;
-  return join(process.cwd(), '.cursor/mcp/figma-links.yaml');
+  const cwd = process.cwd();
+  const newPath = join(cwd, '.cursor/mcp/figma.config.yaml');
+  if (existsSync(newPath)) return newPath;
+  const legacyPath = join(cwd, '.cursor/mcp/figma-links.yaml');
+  if (existsSync(legacyPath)) return legacyPath;
+  return newPath;
 }

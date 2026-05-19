@@ -34,9 +34,17 @@ const ARTIFACTS_DIR = join(CACHE_ROOT, 'artifacts');
 
 type McpSource = 'desktop' | 'bridge' | 'cloud';
 
-function resolveMcpSource(): McpSource {
+function resolveMcpSource(configPath?: string): McpSource {
   const src = process.env.FIGMA_MCP_SOURCE?.toLowerCase();
   if (src === 'bridge' || src === 'cloud') return src;
+  if (configPath) {
+    try {
+      const config = loadFigmaLinksConfig(configPath);
+      if (config.source === 'bridge' || config.source === 'cloud') return config.source;
+    } catch {
+      // config unreadable — fall through to default
+    }
+  }
   return 'desktop';
 }
 
@@ -635,8 +643,8 @@ function createTransport(source: McpSource) {
   return new StreamableHTTPClientTransport(new URL(url));
 }
 
-export async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Promise<T> {
-  const source = resolveMcpSource();
+export async function withMcpClient<T>(fn: (client: Client) => Promise<T>, configPath?: string): Promise<T> {
+  const source = resolveMcpSource(configPath);
   const transport = createTransport(source);
   const client = new Client({ name: 'figma-cache', version: '1.0.0' }, { capabilities: {} });
   try {
@@ -659,13 +667,12 @@ export async function withMcpClient<T>(fn: (client: Client) => Promise<T>): Prom
 
 async function callFigmaTool(
   client: Client,
+  source: McpSource,
   canonicalToolName: ToolName,
   nodeId: string,
   extraArgs: Record<string, unknown>,
   bridgeFileKey?: string
 ): Promise<unknown> {
-  const source = resolveMcpSource();
-
   if (source === 'bridge') {
     const bridgeCall = toBridgeToolCall(canonicalToolName, nodeId, bridgeFileKey);
     return client.callTool({ name: bridgeCall.name, arguments: bridgeCall.arguments });
@@ -721,13 +728,14 @@ export async function getCachedOrFetch(options: GetCachedOrFetchOptions): Promis
   mkdirSync(artifactDir, { recursive: true });
 
   const configPath = options.configPath ?? resolveConfigPath(process.argv.slice(2));
+  const source = resolveMcpSource(configPath);
   const config = loadFigmaLinksConfig(configPath);
   const bridgeFileKey = config.bridge?.fileKey || undefined;
 
-  const callWithClient = (client: Client) => callFigmaTool(client, options.toolName, nodeId, extraArgs, bridgeFileKey);
+  const callWithClient = (client: Client) => callFigmaTool(client, source, options.toolName, nodeId, extraArgs, bridgeFileKey);
   const result = options.client
     ? await callWithClient(options.client)
-    : await withMcpClient(callWithClient);
+    : await withMcpClient(callWithClient, configPath);
   const now = new Date().toISOString();
 
   let payloadPath: string | undefined;
@@ -867,7 +875,7 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
   const defaultModuleTools: ToolName[] = ['get_screenshot', 'get_variable_defs', 'get_design_context', 'get_metadata'];
   const defaultStyleguideTools: ToolName[] = ['get_variable_defs'];
 
-  const source = resolveMcpSource();
+  const source = resolveMcpSource(configPath);
   console.log(c.dim(`MCP source: ${source}`));
 
   const targets = loadTargetsFromConfig(configPath).filter((t) => (nodeFilter ? t.nodeId === nodeFilter : true));
@@ -963,7 +971,7 @@ async function cmdWarm(parsed: Record<string, string | boolean>, argv: string[])
   };
 
   // Single MCP connection for the entire warm run — cache hits short-circuit before using the client.
-  await withMcpClient((client) => runWarm(client));
+  await withMcpClient((client) => runWarm(client), configPath);
 }
 
 function inspectTarget(target: FigmaTarget): Record<string, unknown> {

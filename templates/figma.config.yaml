@@ -1,0 +1,28 @@
+# Figma MCP config
+# Used by figma-mcp rules and scripts (tokens:sync, cache warm, modules:setup)
+#
+# source: which Figma MCP backend to use
+#   desktop — Figma Desktop app at http://127.0.0.1:3845/mcp (default, requires Figma Desktop running)
+#   bridge  — figma-mcp-bridge (no rate limits; requires plugin running in Figma)
+#   cloud   — Figma Cloud MCP (set FIGMA_MCP_CLOUD_URL env var)
+source: desktop
+
+# bridge: settings used when source is bridge.
+# fileKey: required only when multiple Figma files are open simultaneously.
+# Find the file key from the Figma file URL or from the plugin's connected-files list.
+bridge:
+  fileKey: ""
+
+styleguide:
+  colors: ""
+  typography: ""
+  grid: ""
+
+modules:
+  # Add your modules here, one per line.
+  # Prefix the Figma URL with @ to mark the module's source node.
+  # Child nodes are discovered from the source node; do not add child node URLs manually.
+  # Example:
+  #   header-text: "@https://www.figma.com/design/<file-key>/...?node-id=XXX-YYY&m=dev"
+  #   content-accordion: "@https://www.figma.com/design/<file-key>/...?node-id=XXX-YYY&m=dev"
+  #   content-faq: ""

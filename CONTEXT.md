@@ -6,7 +6,7 @@
 
 ### Managed Source Node
 
-A configured Figma URL prefixed with `@` in `.cursor/mcp/figma-links.yaml`.
+A configured Figma URL prefixed with `@` in `.cursor/mcp/figma.config.yaml`.
 
 Managed source nodes are included in cache warmup, module manifests, and module generation workflows. Unprefixed URLs are reference links unless a command explicitly targets them.
 

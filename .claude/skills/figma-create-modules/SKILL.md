@@ -21,14 +21,14 @@ Do not warm cache, refresh cache, sync tokens, scaffold files, edit `.scss`, edi
 
 The user may invoke this skill in two ways:
 
-- **All modules** — no argument, or argument is `all`: process every module in `figma-links.yaml` that has a valid Figma link (value starts with `@http`).
+- **All modules** — no argument, or argument is `all`: process every module in `figma.config.yaml` that has a valid Figma link (value starts with `@http`).
 - **Single module** — argument is a module name (e.g. `content-accordion`): process only that module.
 
-If the argument is ambiguous, resolve it against the module names in `figma-links.yaml` and proceed without asking.
+If the argument is ambiguous, resolve it against the module names in `figma.config.yaml` and proceed without asking.
 
 ## Preparation
 
-1. Read `.cursor/mcp/figma-links.yaml`.
+1. Read `.cursor/mcp/figma.config.yaml`.
 2. Use `figma-mcp cache inspect <module> --json` as the primary source for all Figma resource paths and readiness.
 3. Determine the module list from the invocation mode above:
    - All modules: every entry whose value starts with `@http`.

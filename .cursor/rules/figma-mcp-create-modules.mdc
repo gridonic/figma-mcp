@@ -20,7 +20,7 @@ Do not warm cache, refresh cache, sync tokens, scaffold files, edit `.scss`, edi
 
 ## Parent Preflight
 
-1. Read `.cursor/mcp/figma-links.yaml`.
+1. Read `.cursor/mcp/figma.config.yaml`.
 2. Select every module whose value starts with `@http`.
 3. For each selected module, resolve the expected `.astro` path using Step 1 rules.
 4. For each selected module, run or read the result of:

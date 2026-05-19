@@ -1,7 +1,7 @@
 #!/usr/bin/env npx tsx
 /**
  * Sync design tokens (colors, typography) from Figma MCP to SCSS files.
- * Config: .cursor/mcp/figma-links.yaml
+ * Config: .cursor/mcp/figma.config.yaml
  *
  * Requires Figma desktop app with MCP server enabled (http://127.0.0.1:3845/mcp)
  *

@@ -81,7 +81,7 @@ async function cmdInit() {
     console.log(c.green('✓ Done.'));
     if (configCreated) {
       console.log(
-        `\n${c.cyan('Next:')} Fill in your Figma node URLs in ${c.dim('.cursor/mcp/figma-links.yaml')}`
+        `\n${c.cyan('Next:')} Fill in your Figma node URLs in ${c.dim('.cursor/mcp/figma.config.yaml')}`
       );
     }
   }
@@ -213,12 +213,18 @@ function copyClaudeSkills() {
 }
 
 function createConfigTemplate() {
-  const templatePath = join(PACKAGE_ROOT, 'templates/figma-links.yaml');
+  const templatePath = join(PACKAGE_ROOT, 'templates/figma.config.yaml');
   const targetDir = join(PROJECT_ROOT, '.cursor/mcp');
-  const targetPath = join(targetDir, 'figma-links.yaml');
+  const targetPath = join(targetDir, 'figma.config.yaml');
+  const legacyPath = join(targetDir, 'figma-links.yaml');
 
   if (existsSync(targetPath)) {
-    console.log(`  ${c.dim('skip')} .cursor/mcp/figma-links.yaml ${c.dim('(already exists)')}`);
+    console.log(`  ${c.dim('skip')} .cursor/mcp/figma.config.yaml ${c.dim('(already exists)')}`);
+    return false;
+  }
+
+  if (existsSync(legacyPath)) {
+    console.log(`  ${c.dim('skip')} .cursor/mcp/figma.config.yaml ${c.dim('(figma-links.yaml found — rename to figma.config.yaml and add source: desktop|bridge|cloud at the top)')}`);
     return false;
   }
 
@@ -229,7 +235,7 @@ function createConfigTemplate() {
 
   mkdirSync(targetDir, { recursive: true });
   copyFileSync(templatePath, targetPath);
-  console.log(`  📄 .cursor/mcp/figma-links.yaml ${c.dim('(created from template)')}`);
+  console.log(`  📄 .cursor/mcp/figma.config.yaml ${c.dim('(created from template)')}`);
   return true;
 }
 
@@ -314,7 +320,7 @@ function cmdHelp() {
   console.log('  upgrade [--rules-only]     Install latest published version and refresh rules + skills');
   console.log('  cache list                 List all cached Figma MCP artifacts');
   console.log('  cache clear                Delete entire local cache');
-  console.log('  cache warm                 Pre-populate cache from figma-links.yaml');
+  console.log('  cache warm                 Pre-populate cache from figma.config.yaml');
   console.log('  cache refresh              Force-refresh cache from Figma MCP');
   console.log('  cache inspect [module]     Inspect module manifests and artifact readiness');
   console.log('  cache get --url --node     Fetch and cache a single artifact');

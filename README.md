@@ -22,7 +22,7 @@ It provides:
   - `figma-cache.ts` (cache management)
   - `sync-design-tokens.ts` (SCSS token sync)
   - `modules-setup.ts` (orchestrated setup)
-- `templates/figma-links.yaml`
+- `templates/figma.config.yaml`
 
 ## Install
 
@@ -47,7 +47,7 @@ npx figma-mcp init
 1. Fill in Figma URLs in:
 
 ```text
-.cursor/mcp/figma-links.yaml
+.cursor/mcp/figma.config.yaml
 ```
 
 1. Warm cache from configured nodes:
@@ -125,7 +125,7 @@ npm run figma-mcp -- info
 `init`:
 
 - Copies package cursor rules into `.cursor/rules/`
-- Creates `.cursor/mcp/figma-links.yaml` from template (if missing)
+- Creates `.cursor/mcp/figma.config.yaml` from template (if missing)
 - Adds one npm wrapper script to the target project's `package.json` (without overwriting existing keys)
 
 ### `upgrade`
@@ -162,7 +162,7 @@ Supported tools for cache actions:
 - `get_metadata`
 - `get_figjam`
 
-Module URLs prefixed with `@` in `.cursor/mcp/figma-links.yaml` are managed source nodes. `cache warm` processes those module source nodes, writes source-node artifacts, discovers child nodes from source design context, and warms child-node artifacts automatically. Child nodes are descendants inside the source node; users do not need to list them in the config.
+Module URLs prefixed with `@` in `.cursor/mcp/figma.config.yaml` are managed source nodes. `cache warm` processes those module source nodes, writes source-node artifacts, discovers child nodes from source design context, and warms child-node artifacts automatically. Child nodes are descendants inside the source node; users do not need to list them in the config.
 
 Use `cache inspect` to see module manifest and artifact readiness:
 
@@ -233,7 +233,7 @@ http://127.0.0.1:3845/mcp
 
 1. Install package
 2. Run `npx figma-mcp init`
-3. Add/verify Figma node links in `.cursor/mcp/figma-links.yaml`
+3. Add/verify Figma node links in `.cursor/mcp/figma.config.yaml`
 4. Run `npx figma-mcp cache warm --refresh`
 5. Run `npx figma-mcp tokens:sync --refresh`
 6. Run `npx figma-mcp modules:setup`
@@ -279,7 +279,7 @@ npm run figma-mcp -- upgrade --rules-only
 - `Cache miss ... allowFetchOnMiss false`
   - Seed cache first with `npx figma-mcp cache warm --refresh` or run token sync with `--refresh`.
 - `Could not parse node IDs`
-  - Validate `figma-links.yaml` URLs include `node-id=...`.
+  - Validate `figma.config.yaml` URLs include `node-id=...`.
 - Token sync marker errors
   - Add required marker blocks in your SCSS files.
 - MCP connection failures
