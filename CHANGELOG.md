@@ -1,3 +1,7 @@
+## [1.0.7](https://github.com/gridonic/figma-mcp/compare/v1.0.6...v1.0.7)
+
+- refactored config file
+
 ## [1.0.6](https://github.com/gridonic/figma-mcp/compare/v1.0.5...v1.0.6)
 
 - improve cache
