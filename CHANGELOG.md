@@ -1,3 +1,8 @@
+## [1.0.8](https://github.com/gridonic/figma-mcp/compare/v1.0.7...v1.0.8)
+
+- Add bridge commands
+- rename commands using colon styling
+
 ## [1.0.7](https://github.com/gridonic/figma-mcp/compare/v1.0.6...v1.0.7)
 
 - refactored config file
