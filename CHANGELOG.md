@@ -1,3 +1,7 @@
+## [1.0.10](https://github.com/gridonic/figma-mcp/compare/v1.0.9...v1.0.10)
+
+- add partials to pre-pass
+
 ## [1.0.9](https://github.com/gridonic/figma-mcp/compare/v1.0.8...v1.0.9)
 
 - add readme for bridge-setup
