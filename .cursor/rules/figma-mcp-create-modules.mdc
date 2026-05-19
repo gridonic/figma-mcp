@@ -11,8 +11,8 @@ Uses rule: @figma-mcp-generic.mdc
 This rule assumes the user already ran the manual preparation workflow:
 
 1. `npm run figma-mcp -- cache warm --refresh`
-2. `npm run figma-mcp -- tokens:sync --refresh`
-3. Optional validation/scaffolding: `npm run figma-mcp -- modules:setup --no-warm-cache --skip-tokens-sync`
+2. `npm run figma-mcp -- tokens sync --refresh`
+3. Optional validation/scaffolding: `npm run figma-mcp -- modules setup --no-warm-cache --skip-tokens-sync`
 
 Do not warm cache, refresh cache, sync tokens, scaffold files, edit `.scss`, edit `.gql`, edit docs, edit tests, or change package files. Only existing target `.astro` files may be changed. Temporary validation marker edits in `.astro` files are allowed only when removed before final output.
 
@@ -30,7 +30,7 @@ npm run figma-mcp -- cache inspect <module-name> --json
 ```
 
 5. Skip a module before spawning a subagent when any precondition fails:
-   - Missing target `.astro` file: `module-name | skipped: setup required | missing component file; run npm run figma-mcp -- modules:setup --no-warm-cache --skip-tokens-sync`
+   - Missing target `.astro` file: `module-name | skipped: setup required | missing component file; run npm run figma-mcp -- modules setup --no-warm-cache --skip-tokens-sync`
    - Missing source-node artifact or module manifest: `module-name | skipped: setup required | missing <artifact-or-manifest>; run npm run figma-mcp -- cache warm --refresh`
    - Missing concrete child-node detail already known to be required: `module-name | skipped: missing design detail | missing <tool> for node <node-id>; run npm run figma-mcp -- cache get --url <source-url> --node <node-id> --tool <tool>`
 
@@ -72,7 +72,7 @@ Rules:
 
 If the file does not exist, skip this module with:
 
-`module-name | skipped: setup required | missing component file; run npm run figma-mcp -- modules:setup --no-warm-cache --skip-tokens-sync`
+`module-name | skipped: setup required | missing component file; run npm run figma-mcp -- modules setup --no-warm-cache --skip-tokens-sync`
 
 Subagent note:
 
@@ -99,7 +99,7 @@ Use the inspect JSON as the stable source for:
 Cache behavior:
 
 - Do not call Figma MCP tools directly.
-- Do not run `cache warm`, `cache refresh`, `cache get`, `tokens:sync`, or `modules:setup`.
+- Do not run `cache warm`, `cache refresh`, `cache get`, `tokens sync`, or `modules setup`.
 - If source-node artifacts or the module manifest are missing, skip this module with `skipped: setup required` and the exact manual command to run.
 - If a specific child-node detail is required for implementation but missing, skip this module with `skipped: missing design detail` and the exact `cache get` command.
 - If the manifest is partial, continue cautiously: use discovered child nodes and raw payload paths, but do not assume undiscovered child nodes are absent.

@@ -214,7 +214,7 @@ async function main(): Promise<void> {
 
   if (options.runTokenSync) {
     console.log('\nStep: syncing design tokens...');
-    execSync('npx figma-mcp tokens:sync', { cwd: ROOT, stdio: 'inherit' });
+    execSync('npx figma-mcp tokens sync', { cwd: ROOT, stdio: 'inherit' });
   } else {
     console.log('\nStep skipped: tokens sync');
   }

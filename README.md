@@ -59,13 +59,13 @@ npx figma-mcp cache warm --refresh
 1. Sync design tokens to SCSS:
 
 ```bash
-npx figma-mcp tokens:sync --refresh
+npx figma-mcp tokens sync --refresh
 ```
 
 1. Run module setup flow:
 
 ```bash
-npx figma-mcp modules:setup
+npx figma-mcp modules setup
 ```
 
 ## Module generation workflow
@@ -74,8 +74,8 @@ The module-generation agent expects prepared cache, token, and scaffold state. R
 
 ```bash
 npm run figma-mcp -- cache warm --refresh
-npm run figma-mcp -- tokens:sync --refresh
-npm run figma-mcp -- modules:setup --no-warm-cache --skip-tokens-sync
+npm run figma-mcp -- tokens sync --refresh
+npm run figma-mcp -- modules setup --no-warm-cache --skip-tokens-sync
 ```
 
 After that, invoke the module-generation agent/rule for one module or all managed modules.
@@ -107,8 +107,8 @@ npx figma-mcp cache inspect [module] [--json]
 npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]
 npx figma-mcp cache refresh [--config <path>] [--tool <tool>] [--node <nodeId>]
 npx figma-mcp cache get --url <figma-url> --node <nodeId> [--tool <tool>] [--refresh]
-npx figma-mcp tokens:sync [-y|--yes] [--debug] [--refresh]
-npx figma-mcp modules:setup
+npx figma-mcp tokens sync [-y|--yes] [--debug] [--refresh]
+npx figma-mcp modules setup
 npx figma-mcp info
 npx figma-mcp help
 ```
@@ -179,7 +179,7 @@ npx figma-mcp cache get --url "<figma-url>" --node <child-node-id> --tool get_de
 
 Partial manifests are marked as incomplete with warnings. Agents may use discovered child nodes, but should not treat undiscovered child nodes as proof that no such nodes exist.
 
-### `tokens:sync`
+### `tokens sync`
 
 Syncs color and typography tokens from Figma MCP into:
 
@@ -214,8 +214,8 @@ Use it like this:
 
 ```bash
 npm run figma-mcp -- cache warm --refresh
-npm run figma-mcp -- tokens:sync --refresh
-npm run figma-mcp -- modules:setup
+npm run figma-mcp -- tokens sync --refresh
+npm run figma-mcp -- modules setup
 ```
 
 ## Requirements
@@ -235,8 +235,8 @@ http://127.0.0.1:3845/mcp
 2. Run `npx figma-mcp init`
 3. Add/verify Figma node links in `.cursor/mcp/figma.config.yaml`
 4. Run `npx figma-mcp cache warm --refresh`
-5. Run `npx figma-mcp tokens:sync --refresh`
-6. Run `npx figma-mcp modules:setup`
+5. Run `npx figma-mcp tokens sync --refresh`
+6. Run `npx figma-mcp modules setup`
 7. Use Cursor rules to generate/update modules
 
 ## Release and upgrade lifecycle

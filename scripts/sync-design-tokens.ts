@@ -6,10 +6,10 @@
  * Requires Figma desktop app with MCP server enabled (http://127.0.0.1:3845/mcp)
  *
  * Usage:
- *   npx figma-mcp tokens:sync             # Interactive: y/n/c confirmation
- *   npx figma-mcp tokens:sync -y          # Skip confirmation (use defaults)
- *   npx figma-mcp tokens:sync --debug     # Log raw MCP response objects
- *   npx figma-mcp tokens:sync --refresh   # Refresh local cache from MCP first
+ *   npx figma-mcp tokens sync             # Interactive: y/n/c confirmation
+ *   npx figma-mcp tokens sync -y          # Skip confirmation (use defaults)
+ *   npx figma-mcp tokens sync --debug     # Log raw MCP response objects
+ *   npx figma-mcp tokens sync --refresh   # Refresh local cache from MCP first
  */
 
 import { createInterface } from 'readline';

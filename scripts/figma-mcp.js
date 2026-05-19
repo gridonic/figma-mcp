@@ -9,7 +9,7 @@ import {
   readdirSync,
   writeFileSync,
 } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { dirname, join, relative, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync, execFileSync } from 'child_process';
 
@@ -44,8 +44,27 @@ async function runCommand() {
     case 'cache':
       cmdDelegateToScript('figma-cache.ts', args);
       break;
+    case 'bridge':
+      await cmdBridge(args);
+      break;
+    case 'tokens':
+      if (args[0] === 'sync') {
+        cmdDelegateToScript('sync-design-tokens.ts', args.slice(1));
+      } else {
+        console.log(c.yellow(`⚠️  Unknown tokens subcommand: ${args[0] || '(none)'}\n`));
+        console.log('Usage: npx figma-mcp tokens sync [-y] [--refresh]');
+      }
+      break;
     case 'tokens:sync':
       cmdDelegateToScript('sync-design-tokens.ts', args);
+      break;
+    case 'modules':
+      if (args[0] === 'setup') {
+        cmdDelegateToScript('modules-setup.ts', args.slice(1));
+      } else {
+        console.log(c.yellow(`⚠️  Unknown modules subcommand: ${args[0] || '(none)'}\n`));
+        console.log('Usage: npx figma-mcp modules setup');
+      }
       break;
     case 'modules:setup':
       cmdDelegateToScript('modules-setup.ts', args);
@@ -269,6 +288,157 @@ function addNpmScripts() {
   return added;
 }
 
+// ---------------------------------------------------------------------------
+// bridge
+// ---------------------------------------------------------------------------
+
+async function cmdBridge(args) {
+  const sub = args[0];
+  if (sub === 'setup') {
+    await cmdBridgeSetup(args.slice(1));
+  } else if (sub === 'status') {
+    await cmdBridgeStatus();
+  } else {
+    if (sub && sub !== 'help') {
+      console.log(c.yellow(`⚠️  Unknown bridge subcommand: ${sub}\n`));
+    }
+    console.log('Usage:');
+    console.log('  npx figma-mcp bridge setup [--refresh]   Download and prepare the Figma plugin');
+    console.log('  npx figma-mcp bridge status              Check if bridge is running and plugin is connected');
+  }
+}
+
+async function cmdBridgeSetup(args) {
+  const refresh = args.includes('--refresh');
+  const pluginDir = join(PROJECT_ROOT, '.cursor/mcp/figma-bridge-plugin');
+  const manifestPath = join(pluginDir, 'manifest.json');
+
+  if (!refresh && existsSync(manifestPath)) {
+    console.log(c.green('✓ Figma plugin already installed.\n'));
+    console.log(`  ${c.dim('Manifest:')} ${manifestPath}`);
+    console.log(c.dim('\n  Run with --refresh to re-download the latest version.'));
+    return;
+  }
+
+  console.log(c.bold('\n⭐️ figma-mcp bridge setup\n'));
+  console.log(c.dim('Fetching latest figma-mcp-bridge release...'));
+
+  let tag;
+  try {
+    const res = await fetch('https://api.github.com/repos/gethopp/figma-mcp-bridge/releases/latest', {
+      headers: { 'User-Agent': 'figma-mcp' },
+    });
+    if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
+    const release = await res.json();
+    tag = release.tag_name;
+  } catch (err) {
+    console.log(c.red(`✗ Could not fetch release info: ${err.message}`));
+    console.log(c.dim('  Check your internet connection or visit:'));
+    console.log(c.dim('  https://github.com/gethopp/figma-mcp-bridge/releases'));
+    return;
+  }
+
+  console.log(`  latest: ${c.cyan(tag)}\n`);
+
+  const distDir = join(pluginDir, 'dist');
+  mkdirSync(distDir, { recursive: true });
+
+  const base = `https://raw.githubusercontent.com/gethopp/figma-mcp-bridge/${tag}/plugin`;
+  const files = [
+    { url: `${base}/manifest.json`, dest: manifestPath },
+    { url: `${base}/dist/code.js`, dest: join(distDir, 'code.js') },
+    { url: `${base}/dist/index.html`, dest: join(distDir, 'index.html') },
+  ];
+
+  for (const { url, dest } of files) {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'figma-mcp' } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      writeFileSync(dest, await res.text(), 'utf-8');
+      console.log(`  ${c.green('✓')} ${relative(PROJECT_ROOT, dest)}`);
+    } catch (err) {
+      console.log(c.red(`  ✗ ${relative(PROJECT_ROOT, dest)}: ${err.message}`));
+      console.log(c.dim(`    URL: ${url}`));
+      return;
+    }
+  }
+
+  console.log(c.green('\n✓ Plugin ready.\n'));
+  console.log(c.bold('To install in Figma Desktop:'));
+  console.log(`  1. Open Figma Desktop`);
+  console.log(`  2. Main menu ${c.dim('→')} Plugins ${c.dim('→')} Development ${c.dim('→')} Import plugin from manifest`);
+  console.log(`  3. Select: ${c.cyan(manifestPath)}`);
+  console.log('');
+  console.log(c.dim('The plugin only needs to be imported once. Afterwards run it from'));
+  console.log(c.dim('Plugins → Development → Figma MCP Bridge each time you warm cache.'));
+}
+
+async function cmdBridgeStatus() {
+  const BRIDGE_URL = 'http://localhost:1994';
+
+  const ping = async () => {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), 2000);
+    try {
+      const res = await fetch(`${BRIDGE_URL}/ping`, {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'figma-mcp' },
+      });
+      clearTimeout(t);
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      clearTimeout(t);
+      return null;
+    }
+  };
+
+  const listFiles = async () => {
+    try {
+      const res = await fetch(`${BRIDGE_URL}/rpc`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'User-Agent': 'figma-mcp' },
+        body: JSON.stringify({ tool: 'list_files' }),
+      });
+      if (!res.ok) return null;
+      const body = await res.json();
+      return Array.isArray(body.data) ? body.data : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const health = await ping();
+
+  if (!health) {
+    console.log(`  bridge   ${c.yellow('not running')}`);
+    console.log(`  plugin   ${c.dim('unknown')}\n`);
+    console.log(c.dim('  The bridge starts automatically when Cursor opens (via global MCP config).'));
+    console.log(c.dim('  If Cursor is open, check that figma-mcp-bridge is in your MCP settings.'));
+    return;
+  }
+
+  const versionNote = health.version ? c.dim(` v${health.version}`) : '';
+  console.log(`  bridge   ${c.green('running')}${versionNote}`);
+
+  const files = await listFiles();
+  if (!files || files.length === 0) {
+    console.log(`  plugin   ${c.yellow('not connected')}`);
+    console.log('');
+    console.log(c.dim('  Open Figma Desktop, then run Plugins → Development → Figma MCP Bridge.'));
+  } else {
+    console.log(`  plugin   ${c.green(`${files.length} file(s) connected`)}`);
+    for (const f of files) {
+      console.log(`           ${c.dim('·')} ${f.fileName || f.fileKey} ${c.dim(`(${f.fileKey})`)}`);
+    }
+  }
+  console.log('');
+}
+
+// ---------------------------------------------------------------------------
+// delegate to ts scripts
+// ---------------------------------------------------------------------------
+
 function cmdDelegateToScript(scriptFile, scriptArgs) {
   const scriptPath = join(PACKAGE_ROOT, 'scripts', scriptFile);
   const tsxBin = join(PROJECT_ROOT, 'node_modules/.bin/tsx');
@@ -318,14 +488,16 @@ function cmdHelp() {
   console.log('Commands:');
   console.log('  init                       Copy cursor rules + Claude skills, config template, npm script');
   console.log('  upgrade [--rules-only]     Install latest published version and refresh rules + skills');
+  console.log('  bridge setup               Download and prepare the Figma plugin for figma-mcp-bridge');
+  console.log('  bridge status              Check if bridge is running and plugin is connected');
   console.log('  cache list                 List all cached Figma MCP artifacts');
   console.log('  cache clear                Delete entire local cache');
   console.log('  cache warm                 Pre-populate cache from figma.config.yaml');
   console.log('  cache refresh              Force-refresh cache from Figma MCP');
   console.log('  cache inspect [module]     Inspect module manifests and artifact readiness');
   console.log('  cache get --url --node     Fetch and cache a single artifact');
-  console.log('  tokens:sync                Sync color + typography tokens to SCSS files');
-  console.log('  modules:setup              Run full setup pipeline (supports --debug-cache, --cache-root)');
+  console.log('  tokens sync                Sync color + typography tokens to SCSS files');
+  console.log('  modules setup              Run full setup pipeline (supports --debug-cache, --cache-root)');
   console.log('  info                       Show version and paths');
   console.log('  help                       Show this help');
 }
