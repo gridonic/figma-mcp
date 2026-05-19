@@ -38,6 +38,58 @@ Partial manifests do not block preflight. They put the subagent in cautious mode
 
 All-module runs continue with ready modules after per-module skips. Stop the whole run only for global failures such as unreadable config, missing cache root, or a validation environment failure that prevents validation for every ready module.
 
+## Partials Pre-pass
+
+Run after Parent Preflight and before spawning any module subagents. This ensures partial components exist on the filesystem so subagents can use real imports instead of placeholders.
+
+### 1. Collect INSTANCE nodes across all ready modules
+
+For each preflight-ready module, read the source-node design context artifact (path from `cache inspect --json` → `sourceArtifacts.get_design_context.path`). Traverse the JSON tree and collect every node where `type === "INSTANCE"`, recording the node `name`. Deduplicate by name across all modules.
+
+### 2. Derive Astro component names
+
+For each instance name:
+- Strip any path prefix up to and including the last `/` (e.g. `"Components/Benefit Item"` → `"Benefit Item"`)
+- Convert to PascalCase (e.g. `"Benefit Item"` → `"BenefitItem"`)
+
+### 3. Classify
+
+- Name starts with `Icon` → target `src/components/icons/<Name>.astro` — **skip**: icon generation requires SVG extraction and is a separate workflow
+- Everything else → target `src/components/partials/<Name>.astro`
+
+### 4. Diff against filesystem
+
+Check which target files already exist. Collect the missing non-icon ones.
+
+### 5. Create missing partials
+
+For each missing partial:
+- Find its cached child-node design context artifact via the manifest of any module that contains it
+- If the artifact is missing, record it as `skipped: missing cache` — the module subagent will placeholder it — and continue to the next partial
+- Read the cached design context and implement the Astro component:
+  - Use semantic HTML appropriate to the partial type (e.g. `<li>`, `<article>`)
+  - Map text and visual properties to design token classes (typography, color)
+  - Derive props from the component's content slots (text fields, images, links) visible in the design context
+  - Do not apply grid or lane logic — partials are items, not full-width layout modules
+- Write to `src/components/partials/<Name>.astro`
+
+### 6. Build pre-pass result map
+
+Produce a map of `componentName → status` where status is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `existing` | file was already present |
+| `created` | created in this pre-pass |
+| `skipped` | missing cache; module subagents will placeholder this |
+| `icon` | deferred to separate icon workflow |
+
+Output one summary line before proceeding to module subagents:
+
+`partials: X created, Y existing, Z skipped, W icons deferred`
+
+---
+
 ## Processing Loop
 
 For each preflight-ready module, spawn a dedicated subagent and have that subagent complete Steps 1-6 for that module.
@@ -47,7 +99,7 @@ Subagent requirements:
 - Start one subagent per ready module using the Subagent tool (`subagent_type="generalPurpose"`).
 - Launch implementation subagents in parallel in one tool call batch when possible.
 - Browser validation must use isolated headless sessions per module or be serialized by the parent to keep evidence separate.
-- Pass a structured handoff: module name, resolved `.astro` path, source URL, cache root `.cursor/tmp/figma-mcp-cache/`, `cache inspect <module> --json` output or exact command, validation route, write constraints, and the full rules below.
+- Pass a structured handoff: module name, resolved `.astro` path, source URL, cache root `.cursor/tmp/figma-mcp-cache/`, `cache inspect <module> --json` output or exact command, validation route, write constraints, the partials pre-pass result map, and the full rules below.
 - Each subagent must re-run/check `cache inspect <module> --json` for its assigned module before editing.
 - Do not do module implementation work in the parent agent when a subagent can do it.
 - Parent agent waits for all subagents, combines skipped preflight lines with subagent final status lines, and outputs the final summary.
@@ -132,7 +184,14 @@ Apply only the necessary changes to the `.astro` file and follow `@figma-mcp-gen
 - Grid/lane resolution and `ui-grid` usage
 - Typography mapping
 - Color usage
-- Placeholder handling for Figma component instances
+
+**Override `@figma-mcp-generic.mdc` placeholder rule:** For each Figma INSTANCE node, look up the derived Astro component name in the pre-pass result map:
+
+| Pre-pass status | Action |
+| --- | --- |
+| `existing` or `created` | Import and use the real component: `import BenefitItem from '@/components/partials/BenefitItem.astro'` |
+| `skipped` | Use `<div class="component-placeholder benefit-item"></div>` with a comment: `{/* TODO: BenefitItem partial — run cache get for node <id> */}` |
+| `icon` | Use `<div class="component-placeholder icon-name"></div>` with a comment: `{/* TODO: IconName — icon workflow pending */}` |
 
 Module-specific constraints for this rule:
 
