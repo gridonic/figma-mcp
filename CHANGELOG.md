@@ -1,3 +1,7 @@
+## [1.0.11](https://github.com/gridonic/figma-mcp/compare/v1.0.10...v1.0.11)
+
+- add guides and improve readme
+
 ## [1.0.10](https://github.com/gridonic/figma-mcp/compare/v1.0.9...v1.0.10)
 
 - add partials to pre-pass
