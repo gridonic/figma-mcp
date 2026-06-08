@@ -14,8 +14,6 @@ It provides:
 - `.cursor/rules/`
   - `figma-mcp-create-modules.mdc`
   - `figma-mcp-generic.mdc`
-  - `figma-mcp-import-colors.mdc`
-  - `figma-mcp-import-styleguide.mdc`
   - `figma-design-module.mdc`
 - `scripts/`
   - `figma-mcp.js` (CLI entry point)
@@ -44,25 +42,34 @@ npm run figma-mcp -- <command>
 npx figma-mcp init
 ```
 
-1. Fill in Figma URLs in:
+2. Choose your MCP source in `.cursor/mcp/figma.config.yaml`:
 
-```text
-.cursor/mcp/figma.config.yaml
+```yaml
+# Desktop (default) — requires Figma Desktop running with MCP enabled
+source: desktop
+
+# Bridge — bypasses rate limits; one-time plugin setup required
+# See docs/bridge-setup.md
+source: bridge
 ```
 
-1. Warm cache from configured nodes:
+3. Fill in your Figma URLs in `.cursor/mcp/figma.config.yaml` (`styleguide.*` and `modules.*` entries).
+
+4. If using bridge, complete the one-time setup — [docs/bridge-setup.md](docs/bridge-setup.md).
+
+5. Warm cache from configured nodes:
 
 ```bash
 npx figma-mcp cache warm --refresh
 ```
 
-1. Sync design tokens to SCSS:
+6. Sync design tokens to SCSS:
 
 ```bash
 npx figma-mcp tokens sync --refresh
 ```
 
-1. Run module setup flow:
+7. Run module setup flow:
 
 ```bash
 npx figma-mcp modules setup
@@ -221,23 +228,25 @@ npm run figma-mcp -- modules setup
 ## Requirements
 
 - Node.js with npm
-- Figma Desktop app running with MCP server available at:
+- A project configured for the expected SCSS paths (`src/sass/root/_colors.scss`, `src/sass/typography/_font-types.scss`)
+- One of the two Figma MCP sources below:
 
-```text
-http://127.0.0.1:3845/mcp
-```
-
-- A project configured for the expected SCSS paths, or custom paths when supported by command flags
+| Source | `source:` value | When to use |
+|---|---|---|
+| **Figma Desktop** | `desktop` | Default. Requires Figma Desktop running with MCP enabled at `http://127.0.0.1:3845/mcp`. Subject to Figma API rate limits. |
+| **Bridge** | `bridge` | Bypasses rate limits entirely. Requires one-time plugin setup. See [docs/bridge-setup.md](docs/bridge-setup.md). |
 
 ## Recommended workflow
 
 1. Install package
 2. Run `npx figma-mcp init`
-3. Add/verify Figma node links in `.cursor/mcp/figma.config.yaml`
-4. Run `npx figma-mcp cache warm --refresh`
-5. Run `npx figma-mcp tokens sync --refresh`
-6. Run `npx figma-mcp modules setup`
-7. Use Cursor rules to generate/update modules
+3. Set `source: desktop` or `source: bridge` in `.cursor/mcp/figma.config.yaml` (see [Requirements](#requirements))
+4. Add/verify Figma node links in `.cursor/mcp/figma.config.yaml`
+5. If using bridge: complete plugin setup per [docs/bridge-setup.md](docs/bridge-setup.md)
+6. Run `npx figma-mcp cache warm --refresh`
+7. Run `npx figma-mcp tokens sync --refresh`
+8. Run `npx figma-mcp modules setup`
+9. Use Cursor rules to generate/update modules
 
 ## Release and upgrade lifecycle
 
