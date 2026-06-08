@@ -2,222 +2,43 @@
 
 `figma-mcp` packages a reusable **Figma MCP to Astro workflow** so you can install it in any project.
 
-It provides:
-
-- Cursor rules for module generation and design implementation
-- Scripts for cache management and design token sync (colors and typography)
-- A CLI (`figma-mcp`) with setup, cache, and token sync commands
-- Templates and scripts for deterministic Figma data workflows
-
-## What this package includes
-
-- `.cursor/rules/`
-  - `figma-mcp-create-modules.mdc`
-  - `figma-mcp-generic.mdc`
-  - `figma-design-module.mdc`
-- `scripts/`
-  - `figma-mcp.js` (CLI entry point)
-  - `figma-cache.ts` (cache management)
-  - `sync-design-tokens.ts` (SCSS token sync)
-  - `modules-setup.ts` (orchestrated setup)
-- `templates/figma.config.yaml`
-
-## Install
-
-```bash
-npm install figma-mcp@github:gridonic/figma-mcp
-```
-
-After `init`, you can use a single wrapper script:
-
-```bash
-npm run figma-mcp -- <command>
-```
+- **Cursor rules** — module generation and design implementation (`.cursor/rules/`)
+- **CLI** — cache management, token sync, and setup (`npx figma-mcp`)
+- **Scripts** — `figma-cache.ts`, `sync-design-tokens.ts`, `modules-setup.ts`
+- **Config template** — `templates/figma.config.yaml`
 
 ## Quick start
 
-1. Initialize workflow files in your project:
-
 ```bash
+npm install figma-mcp@github:gridonic/figma-mcp
 npx figma-mcp init
 ```
 
-2. Choose your MCP source in `.cursor/mcp/figma.config.yaml`:
+In `.cursor/mcp/figma.config.yaml`:
+
+1. Set your source (bridge is recommended — bypasses rate limits):
 
 ```yaml
-# Desktop (default) — requires Figma Desktop running with MCP enabled
-source: desktop
-
 # Bridge — bypasses rate limits; one-time plugin setup required
-# See docs/bridge-setup.md
 source: bridge
+
+# Desktop — requires Figma Desktop running with MCP enabled
+source: desktop
 ```
 
-3. Fill in your Figma URLs in `.cursor/mcp/figma.config.yaml` (`styleguide.*` and `modules.*` entries).
+2. Fill in your Figma URLs (`styleguide.*` and `modules.*` entries).
 
-4. If using bridge, complete the one-time setup — [docs/bridge-setup.md](docs/bridge-setup.md).
+3. If using bridge, complete the one-time plugin setup: [docs/bridge-setup.md](docs/bridge-setup.md).
 
-5. Warm cache from configured nodes:
+4. Warm cache:
 
 ```bash
 npx figma-mcp cache warm --refresh
 ```
 
-6. Sync design tokens to SCSS:
+## Workflow
 
-```bash
-npx figma-mcp tokens sync --refresh
-```
-
-7. Run module setup flow:
-
-```bash
-npx figma-mcp modules setup
-```
-
-## Module generation workflow
-
-The module-generation agent expects prepared cache, token, and scaffold state. Run the preparation steps explicitly:
-
-```bash
-npm run figma-mcp -- cache warm --refresh
-npm run figma-mcp -- tokens sync --refresh
-npm run figma-mcp -- modules setup --no-warm-cache --skip-tokens-sync
-```
-
-After that, invoke the module-generation agent/rule for one module or all managed modules.
-
-Generation agents use:
-
-```bash
-npm run figma-mcp -- cache inspect <module> --json
-```
-
-as their first design-data step. They read source-node artifacts and module manifests from the inspect output, then edit only existing target `.astro` files. They do not warm cache, sync tokens, scaffold files, or fetch missing child-node details.
-
-If required setup or child-node detail is missing, the agent should skip that module with an exact recovery command, such as:
-
-```bash
-npm run figma-mcp -- cache get --url "<figma-url>" --node <child-node-id> --tool get_design_context
-```
-
-All-module runs continue for modules that pass preflight. Partial manifests are warnings: agents may use discovered child nodes and raw payload paths, but must not assume undiscovered child nodes are absent.
-
-## CLI commands
-
-```text
-npx figma-mcp init
-npx figma-mcp upgrade
-npx figma-mcp cache list
-npx figma-mcp cache clear
-npx figma-mcp cache inspect [module] [--json]
-npx figma-mcp cache warm [--config <path>] [--tool <tool>] [--node <nodeId>] [--refresh]
-npx figma-mcp cache refresh [--config <path>] [--tool <tool>] [--node <nodeId>]
-npx figma-mcp cache get --url <figma-url> --node <nodeId> [--tool <tool>] [--refresh]
-npx figma-mcp tokens sync [-y|--yes] [--debug] [--refresh]
-npx figma-mcp modules setup
-npx figma-mcp info
-npx figma-mcp help
-```
-
-Equivalent npm wrapper usage:
-
-```text
-npm run figma-mcp -- upgrade
-npm run figma-mcp -- info
-```
-
-### `init`
-
-`init`:
-
-- Copies package cursor rules into `.cursor/rules/`
-- Creates `.cursor/mcp/figma.config.yaml` from template (if missing)
-- Adds one npm wrapper script to the target project's `package.json` (without overwriting existing keys)
-
-### `upgrade`
-
-`upgrade` updates to the latest published `figma-mcp` version, then re-copies package rules to pick up updates in an existing project.
-
-Use:
-
-```bash
-npm run figma-mcp -- upgrade
-```
-
-Optional:
-
-```bash
-npm run figma-mcp -- upgrade --rules-only
-```
-
-(`--rules-only` skips `npm install` and only refreshes rules.)
-
-### `cache` subcommands
-
-Artifacts are stored under:
-
-```text
-.cursor/tmp/figma-mcp-cache/
-```
-
-Supported tools for cache actions:
-
-- `get_screenshot`
-- `get_variable_defs`
-- `get_design_context`
-- `get_metadata`
-- `get_figjam`
-
-Module URLs prefixed with `@` in `.cursor/mcp/figma.config.yaml` are managed source nodes. `cache warm` processes those module source nodes, writes source-node artifacts, discovers child nodes from source design context, and warms child-node artifacts automatically. Child nodes are descendants inside the source node; users do not need to list them in the config.
-
-Use `cache inspect` to see module manifest and artifact readiness:
-
-```bash
-npx figma-mcp cache inspect header-text
-npx figma-mcp cache inspect header-text --json
-```
-
-The JSON output is the stable agent-facing view. It includes the source node, discovered child nodes, fetched/missing artifact status, shared variable artifact paths, raw payload paths, and lazy-fetch guidance. Sparse source-node design-context responses now auto-warm direct child design contexts during `cache warm`; if any child-node artifact is still missing, fetch it through the cache, for example:
-
-```bash
-npx figma-mcp cache get --url "<figma-url>" --node <child-node-id> --tool get_design_context
-```
-
-Partial manifests are marked as incomplete with warnings. Agents may use discovered child nodes, but should not treat undiscovered child nodes as proof that no such nodes exist.
-
-### `tokens sync`
-
-Syncs color and typography tokens from Figma MCP into:
-
-- `src/sass/root/_colors.scss`
-- `src/sass/typography/_font-types.scss`
-
-Expected markers in target files:
-
-```scss
-// @figma-tokens:colors:start
-// ...
-// @figma-tokens:colors:end
-
-// @figma-tokens:font-types:start
-// ...
-// @figma-tokens:font-types:end
-```
-
-If markers are missing, sync fails with guidance.
-
-## NPM script injected by `init`
-
-`init` adds this script when absent:
-
-```json
-{
-  "figma-mcp": "npx figma-mcp"
-}
-```
-
-Use it like this:
+Prepare cache, tokens, and scaffolding before running the generation agent:
 
 ```bash
 npm run figma-mcp -- cache warm --refresh
@@ -225,76 +46,39 @@ npm run figma-mcp -- tokens sync --refresh
 npm run figma-mcp -- modules setup
 ```
 
-## Requirements
+Then invoke the module-generation rule in Cursor for one module or all managed modules.
 
-- Node.js with npm
-- A project configured for the expected SCSS paths (`src/sass/root/_colors.scss`, `src/sass/typography/_font-types.scss`)
-- One of the two Figma MCP sources below:
-
-| Source | `source:` value | When to use |
-|---|---|---|
-| **Figma Desktop** | `desktop` | Default. Requires Figma Desktop running with MCP enabled at `http://127.0.0.1:3845/mcp`. Subject to Figma API rate limits. |
-| **Bridge** | `bridge` | Bypasses rate limits entirely. Requires one-time plugin setup. See [docs/bridge-setup.md](docs/bridge-setup.md). |
-
-## Recommended workflow
-
-1. Install package
-2. Run `npx figma-mcp init`
-3. Set `source: desktop` or `source: bridge` in `.cursor/mcp/figma.config.yaml` (see [Requirements](#requirements))
-4. Add/verify Figma node links in `.cursor/mcp/figma.config.yaml`
-5. If using bridge: complete plugin setup per [docs/bridge-setup.md](docs/bridge-setup.md)
-6. Run `npx figma-mcp cache warm --refresh`
-7. Run `npx figma-mcp tokens sync --refresh`
-8. Run `npx figma-mcp modules setup`
-9. Use Cursor rules to generate/update modules
-
-## Release and upgrade lifecycle
-
-### Maintainers (publish new version)
-
-1. Run `npm run release` in this repository.
-2. Follow the prompts to:
-   - bump `package.json` version
-   - update `CHANGELOG.md`
-   - create commit + `vX.Y.Z` tag
-3. Push commit and tag:
+To fetch a missing child-node artifact:
 
 ```bash
-git push
-git push origin vX.Y.Z
+npm run figma-mcp -- cache get --url "<figma-url>" --node <child-node-id> --tool get_design_context
 ```
 
-### Consumers (get latest published version)
+> **Note:** `tokens sync` requires marker blocks in `src/sass/root/_colors.scss` and `src/sass/typography/_font-types.scss`:
+>
+> ```scss
+> // @figma-tokens:colors:start
+> // @figma-tokens:colors:end
+>
+> // @figma-tokens:font-types:start
+> // @figma-tokens:font-types:end
+> ```
 
-After a new tag is published, run:
+## CLI commands
 
-```bash
-npm run figma-mcp -- upgrade
+```text
+npx figma-mcp init
+npx figma-mcp upgrade [--rules-only]
+npx figma-mcp bridge setup [--refresh]
+npx figma-mcp bridge status
+npx figma-mcp cache warm [--refresh]
+npx figma-mcp cache inspect [module] [--json]
+npx figma-mcp cache get --url <url> --node <nodeId> [--tool <tool>]
+npx figma-mcp cache list|clear
+npx figma-mcp tokens sync [--refresh]
+npx figma-mcp modules setup
+npx figma-mcp info|help
 ```
-
-This command:
-
-- installs the latest tagged `figma-mcp` version
-- refreshes `.cursor/rules/` from the installed package
-
-If you only want to refresh rules without installing a new package version:
-
-```bash
-npm run figma-mcp -- upgrade --rules-only
-```
-
-## Troubleshooting
-
-- `Cache miss ... allowFetchOnMiss false`
-  - Seed cache first with `npx figma-mcp cache warm --refresh` or run token sync with `--refresh`.
-- `Could not parse node IDs`
-  - Validate `figma.config.yaml` URLs include `node-id=...`.
-- Token sync marker errors
-  - Add required marker blocks in your SCSS files.
-- MCP connection failures
-  - Confirm Figma Desktop MCP is running on `127.0.0.1:3845`.
-- `FIGMA_MCP_SOURCE=bridge` + `ENOENT figma-mcp-bridge`
-  - Set `FIGMA_MCP_BRIDGE_CMD` (for example `npx -y @gethopp/figma-mcp-bridge`) or switch to `FIGMA_MCP_SOURCE=desktop`.
 
 ## License
 
